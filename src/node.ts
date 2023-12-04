@@ -6,13 +6,15 @@ const registry = new Map<string, Node>() // address -> node
 export class Node {
     public port!: number
     public id!: string
-    public connections: Map<string, WebSocketServer> = new Map()
+    // address -> connection
+    public connections: Map<string, WebSocket> = new Map()
 
     private constructor() { }
 
-    static async create() {
+    static async create(id?: string) {
         const node = new Node()
         node.port = await getAvailablePort()
+        node.id = id ?? node.port.toString()
         registry.set(node.address, node)
         return node
     }
@@ -22,7 +24,7 @@ export class Node {
     }
 
     get peers() {
-        return Array.from(registry.keys()).filter((id) => id !== this.id)
+        return Array.from(registry.keys()).filter((addr) => addr !== this.address)
     }
 
     start() {
@@ -56,12 +58,15 @@ export class Node {
                     this.connect(peer)
                     return
                 }
+
+                ws.send('hello')
             })
-        })
+        }, 2000)
     }
 
     connect(peer: string) {
         const ws = new WebSocket(peer)
+        this.connections.set(peer, ws)
         ws.on('error', (err) => {
             console.error(`[${this.id}] error: %s`, err)
         })
