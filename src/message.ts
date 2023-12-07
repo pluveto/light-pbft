@@ -14,9 +14,13 @@ export type FindMasterMsg = {
     type: 'find-master'
 };
 
+export type QueryStatusMsg = {
+    type: 'query-status'
+};
+
 export type MasterInfoMsg = {
     type: 'master-info'
-    master_addr: string
+    master_name: string
 };
 
 export type RequestMsg = {
@@ -25,15 +29,29 @@ export type RequestMsg = {
     payload: string
 };
 
+export type CommitMsg = {
+    type: 'commit'
+    view: number
+    sequence: number
+    digest: string
+}
+
 export type PrePrepareMsg = {
     type: 'pre-prepare'
-    timestamp: number
     view: number
+    sequence: number
     digest: string
     request: RequestMsg
 };
 
-export type ClientMessage = RequestMsg;
-export type PeerMessage = ErrorMsg | FindMasterMsg | MasterInfoMsg | PrePrepareMsg;
+export type PrepareMsg = {
+    type: 'prepare'
+    view: number
+    sequence: number
+    digest: string
+};
+
+export type ClientMessage = RequestMsg | QueryStatusMsg;
+export type PeerMessage = ErrorMsg | FindMasterMsg | MasterInfoMsg | PrePrepareMsg | PrepareMsg;
 export type Message = ClientMessage | PeerMessage;
 

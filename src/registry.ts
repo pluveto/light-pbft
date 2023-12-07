@@ -7,7 +7,7 @@ export class Registry {
 
     private addr2node = new Map<string, NodeInterface>()
     private id2node = new Map<number, NodeInterface>()
-    maxMalNodes: number = 1
+    maxMalNodes: number = 1 // maxium number of malicious nodes
 
     public constructor(options: { maxMalNodes: number }) {
         this.maxMalNodes = options.maxMalNodes

@@ -1,169 +1,185 @@
-import { WebSocketServer, WebSocket } from 'ws'
-import { getAvailablePort } from './util'
-import { ErrorCode, ErrorMsg, MasterInfoMsg, Message } from './message'
+import jaysom from 'jayson/promise'
+
 import { Registry } from './registry'
+import { boardcast, createSeqIterator, sha256 } from './util'
+import { CommitMsg, MasterInfoMsg, Message, PrePrepareMsg, PrepareMsg, RequestMsg } from './message'
+import { NodeConfig, SystemConfig } from './config'
+import { Automata } from './automata'
 
-export class Node {
-    public port!: number
-    public id!: number // 0, 1, 2, 3, ...
+function calcMaster(view: number, nodes: NodeConfig[]) {
+    const masterIndex = view % nodes.length
+    return nodes[masterIndex]
+}
+
+function createMsgDigest<T extends Message>(msg: T) {
+    return sha256(JSON.stringify(msg))
+}
+
+export enum NodeStatus {
+    Idle = 'idle',
+    Prepare = 'prepare',
+    Commit = 'commit',
+}
+
+export class Node<TAutomata> {
     // address -> connection
-    public connections: Map<string, WebSocket> = new Map()
-
-    private view: number = 0
-    private registry!: Registry
-
-    private constructor() { }
-
-    static async create(registry: Registry) {
-        const node = new Node()
-        node.port = await getAvailablePort()
-        node.id = registry.size
-        node.registry = registry
-        registry.add(node)
-        return node
+    meta: NodeConfig
+    nodes: Map<string, jaysom.client> = new Map() // name -> client
+    view: number = 0
+    registry!: Registry
+    config: SystemConfig
+    seq = createSeqIterator()
+    status: NodeStatus = NodeStatus.Idle
+    params = {
+        f: 1, // max fault node count
     }
 
-    get isMaster() {
-        return this.id === this.view
+    preparing?: {
+        digest: string
+        msg: PrepareMsg
+        count: number
+        prepared: boolean
     }
 
-    get address() {
-        return `ws://localhost:${this.port}`
+    commiting?: {
+        digest: string
+        msg: CommitMsg
+        count: number
+        committed: boolean // committed locally
     }
 
-    get peers() {
-        return Array.from(this.registry.keys()).filter((addr) => addr !== this.address)
-    }
+    automata: Automata<TAutomata>
 
-    async start() {
-        this.registry.preStartCheck()
+    constructor(meta: NodeConfig, config: SystemConfig, automata: Automata<TAutomata>) {
+        this.meta = meta
+        this.config = config
+        this.automata = automata
 
-        return new Promise<void>((resolve, reject) => {
-            const wss = new WebSocketServer({ port: this.port })
-            wss.on('error', (err) => {
-                console.error(`[${this.id}] error: %s`, err)
-                reject(err)
+        this.config.nodes.map((node) => {
+            const client = jaysom.client.http({
+                host: node.host,
+                port: node.port,
             })
-
-            wss.on('listening', () => {
-                console.log(`[${this.id}] listening on %s`, this.address)
-                this.live()
-                resolve()
-            })
-
-            wss.on('connection', (ws) => {
-                ws.on('error', (err) => {
-                    console.error(`[${this.id}] error: %s`, err)
-                })
-
-                ws.on('message', (data) => {
-                    console.log(`[${this.id}] received: %s`, data)
-                    let msg
-                    try {
-                        msg = JSON.parse(data.toString('utf-8'))
-                    } catch (error) {
-                        console.error(`[${this.id}] invalid message: %s`, data)
-                        return
-                    }
-                    // msg must has a type field
-                    if (!msg.type) {
-                        console.error(`[${this.id}] invalid message: %s`, data)
-                        return
-                    }
-                    this.onMessage(ws, msg as Message)
-                })
-            })
+            this.nodes.set(node.name, client)
         })
     }
 
-    onMessage(ws: WebSocket, data: Message) {
-        const source = this.registry.resolve(ws.url)
-        if (!source) {
-            console.warn(`[${this.id}] message from non-peer: %s`, data)
-        }
+    getMaster() {
+        return calcMaster(this.view, this.config.nodes)
+    }
 
-        switch (data.type) {
-            case 'error': {
-                const err = data as ErrorMsg
-                console.error(`[${this.id}] error: %s, %s`, err.code, err.message)
-                break
-            }
-            case 'find-master': {
-                this.send<MasterInfoMsg>({
+    router() {
+        return {
+            'query-status': async () => {
+                return {
+                    status: 'ok',
+                    view: this.view,
+                }
+            },
+            'find-master': async () => {
+                const ret: MasterInfoMsg = {
                     type: 'master-info',
-                    master_addr: this.registry.get(this.view)!.address,
-                }, ws)
-                break
-            }
-            case 'master-info': {
-                this.send<ErrorMsg>({
-                    type: 'error',
-                    code: ErrorCode.INVALID_TYPE,
-                    message: 'I don\'t need master info',
-                }, ws)
-                break
-            }
-            case 'request': {
-                if (!this.isMaster) {
-                    this.send<ErrorMsg>({
-                        type: 'error',
-                        code: ErrorCode.NOT_MASTER,
-                        message: 'I am not the master',
-                    }, ws)
+                    master_name: this.getMaster().name,
                 }
-                break
-            }
-            default: {
-                this.send<ErrorMsg>({
-                    type: 'error',
-                    code: ErrorCode.INVALID_TYPE,
-                    message: 'Unknown message type',
-                }, ws)
+                return ret
+            },
+            'pre-prepare': async (msg: PrePrepareMsg) => {
+                // todo: validate signatures of m and pre-prepare msg
+                if (msg.view !== this.view) {
+                    throw new Error('mismatch view')
+                }
+                const digest = await createMsgDigest(msg.request)
+                if (digest !== msg.digest) {
+                    throw new Error('mismatch digest')
+                }
+
+                this.status = NodeStatus.Prepare
+                const prepareMsg: PrepareMsg = {
+                    type: 'prepare',
+                    view: this.view,
+                    sequence: msg.sequence,
+                    digest: msg.digest,
+                }
+                this.preparing = {
+                    digest: msg.digest,
+                    msg: prepareMsg,
+                    count: 0,
+                    prepared: false,
+                }
+                const ret = await this.boardcast(prepareMsg)
+            },
+            'prepare': async (msg: PrepareMsg) => {
+                if (!this.preparing) {
+                    throw new Error('no preparing')
+                }
+                console.assert(this.status === NodeStatus.Prepare)
+                if (msg.view !== this.view) {
+                    throw new Error('mismatch view')
+                }
+                if (msg.digest !== this.preparing.digest) {
+                    throw new Error('mismatch digest')
+                }
+                this.preparing.count++
+                if (this.preparing.count >= 2 * this.params.f) {
+                    this.preparing.prepared = true
+                    this.status = NodeStatus.Commit
+
+                    const commitMsg: CommitMsg = {
+                        type: 'commit',
+                        view: this.view,
+                        sequence: msg.sequence,
+                        digest: msg.digest,
+                    }
+
+                    const ret = await this.boardcast(commitMsg)
+                }
+            },
+            'commit': async (msg: CommitMsg) => {
+                // 1. validate signatures of m and commit msg
+                // 2. validate view
+                if (msg.view !== this.view) {
+                    throw new Error('mismatch view')
+                }
+                // 3. validate sequence
+                if (!this.isValidSeq(msg.sequence)) {
+                    throw new Error('invalid sequence')
+                }
+
+                // 4. validate digest
+                if (this.commiting?.digest !== msg.digest) {
+                    throw new Error('mismatch digest')
+                }
+
+                this.commiting.count++
+
+                if (this.commiting.count >= 2 * this.params.f) {
+                    this.commiting.committed = true
+                    this.status = NodeStatus.Idle
+                    this.view++
+                    this.commiting = undefined
+                    this.preparing = undefined
+                }
+            },
+            'request': async (msg: RequestMsg) => {
+                const n = this.seq.next()
+                const prePrepareMsg: PrePrepareMsg = {
+                    type: 'pre-prepare',
+                    view: this.view,
+                    sequence: n,
+                    digest: await createMsgDigest(msg),
+                    request: msg,
+                }
+                const ret = await this.boardcast(prePrepareMsg)
+                return {}
             }
         }
     }
-
-    send<T>(msg: T, ws?: WebSocket) {
-        const data = JSON.stringify(msg)
-        if (ws) {
-            ws.send(data)
-            return
-        }
-
-        this.connections.forEach((ws) => {
-            ws.send(data)
-        })
+    async boardcast<T extends Message>(payload: T): Promise<Message[]> {
+        const nodes = [...this.nodes.values()]
+        return boardcast(nodes, payload)
     }
 
-    live() {
-        setInterval(() => {
-            const ids = Array.from(this.connections.keys()).map((addr) => this.registry.resolve(addr)!.id).join(', ')
-            console.error(`[${this.id}] connections: [%s]`, ids)
-            this.peers.forEach((peer) => {
-                const ws = this.connections.get(peer)
-                if (!ws) {
-                    this.connect(peer)
-                    return
-                }
-
-                ws.send('hello')
-            })
-        }, 2000)
-    }
-
-    connect(peer: string) {
-        const ws = new WebSocket(peer)
-        this.connections.set(peer, ws)
-        ws.on('error', (err) => {
-            console.error(`[${this.id}] error: %s`, err)
-        })
-
-        ws.on('open', () => {
-            console.log(`[${this.id}] connected to %s`, peer)
-        })
-
-        ws.on('message', (data) => {
-            console.log(`[${this.id}] received: %s`, data)
-        })
+    async isValidSeq(seq: number) {
+        return 0 < seq && seq <= this.seq.peek()
     }
 }

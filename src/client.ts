@@ -1,48 +1,37 @@
-import WebSocket from 'ws'
+import { NodeConfig } from './config'
+import jaysom from 'jayson/promise'
+import { Message } from './message'
+import { boardcast } from './util'
 
-const clients = new Map<string, Client>() // address -> node
+
 
 export class Client {
-    public id!: string
-    private connection?: WebSocket
-    private constructor() { }
-
-    static async create(id?: string) {
-        const node = new Client()
-        node.id = id ?? 'client'
-        clients.set(node.id, node)
-        return node
+    /**
+     * send a message to master node
+     */
+    send<T extends Message>(msg: T): Promise<Message> {
+        if (!this.master) {
+            throw new Error('master not set')
+        }
+        return this.nodes.get(this.master)!.request(msg.type, msg)
     }
+    private nodes: Map<string, jaysom.client> = new Map()
+    master?: string
 
-    connect(port: number): Promise<void> {
-        return new Promise((resolve, reject) => {
-            if (this.connection) {
-                reject(new Error('Already connected'))
-            }
-
-            const conn = new WebSocket('ws://localhost:' + port)
-
-            conn.on('error', (error) => {
-                console.error(error)
-                reject(error)
+    constructor(nodes: NodeConfig[]) {
+        nodes.map((node) => {
+            const client = jaysom.client.http({
+                host: node.host,
+                port: node.port,
             })
-
-            conn.on('open', () => {
-                this.connection = conn
-                resolve()
-            })
-
-            conn.on('message', (data) => {
-                console.log(`[${this.id}] received: %s`, data)
-            })
+            this.nodes.set(node.name, client)
         })
     }
 
-    send<T>(msg: T) {
-        if (!this.connection) {
-            throw new Error('Not connected')
-        }
-
-        this.connection.send(JSON.stringify(msg))
+    async boardcast<T extends Message>(payload: T): Promise<Message[]> {
+        const nodes = [...this.nodes.values()]
+        return boardcast(nodes, payload)
     }
+
+
 }
