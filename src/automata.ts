@@ -6,11 +6,14 @@ export interface Automata<TStatus> {
 }
 
 
-export class RWAutomata implements Automata<ReturnType<RWAutomata['status']>> {
+export class KVAutomata implements Automata<ReturnType<KVAutomata['status']>> {
     state: Map<string, string> = new Map()
     history: string[] = []
+    height: number = 0
+    logger: NamedLogger
 
-    constructor(private logger: NamedLogger) {
+    constructor(logger: NamedLogger) {
+        this.logger = logger
     }
     transfer(tx: string) {
         this.logger.info('transferring', tx)

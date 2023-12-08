@@ -2,7 +2,7 @@ import * as jayson from 'jayson/promise'
 import { NodeConfig, SystemConfig } from './config'
 import { Optional } from './types'
 import { Node } from './node'
-import { RWAutomata } from './automata'
+import { KVAutomata } from './automata'
 import { NamedLogger } from './logger'
 function maskPrikeys(name: string, systemConfig: SystemConfig) {
     const config = systemConfig.nodes.find((node) => node.name === name)
@@ -28,7 +28,7 @@ export async function serve(name: string, systemConfig: SystemConfig) {
         throw new Error(`node ${name} not found`)
     }
     const systemConfigLocal = maskPrikeys(config.name, systemConfig)
-    const node = new Node(config, systemConfigLocal, new RWAutomata(new NamedLogger(config.name).derived('automata')))
+    const node = new Node(config, systemConfigLocal, new KVAutomata(new NamedLogger(config.name).derived('automata')))
     const server = new jayson.Server(node.routes())
     server.http().listen({
         host: config.host,
