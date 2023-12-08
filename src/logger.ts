@@ -2,18 +2,16 @@ import chalk from 'chalk'
 
 export class NamedLogger {
     constructor(private name: string) { }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    private log(fn: typeof console.log, color: chalk.Chalk, message?: any, ...optionalParams: any[]) {
-        fn(color(`[${this.name}]`), message, ...optionalParams)
-    }
 
-    info = this.log.bind(this, console.info, chalk.blue)
+    info = console.info.bind(console, chalk.blue(`[${this.name}]`))
 
-    warn = this.log.bind(this, console.warn, chalk.yellow)
+    warn = console.warn.bind(console, chalk.yellow(`[${this.name}]`))
 
-    error = this.log.bind(this, console.error, chalk.red)
+    error = console.error.bind(console, chalk.red(`[${this.name}]`))
 
-    debug = this.log.bind(this, console.debug, chalk.green)
+    debug = console.debug.bind(console, chalk.green(`[${this.name}]`))
+
+    trace = console.trace.bind(console, chalk.gray(`[${this.name}]`))
 
     derived(name: string) {
         return new NamedLogger(`${this.name}:${name}`)
