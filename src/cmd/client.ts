@@ -1,7 +1,7 @@
 import chalk from 'chalk'
 import { Client } from '../client'
 import { FindMasterMsg, MasterInfoMsg, QueryStatusMsg, RequestMsg } from '../message'
-import { readConfig } from '../config'
+import { NodeConfig, readConfig } from '../config'
 import { Optional } from '../types'
 import { quote } from '../util'
 
@@ -38,18 +38,31 @@ function selectMajor<T>(arr: T[]): Optional<T> {
     return undefined
 }
 
+function printNodes(nodes: NodeConfig[]) {
+    console.log('nodes:')
+    for (const node of nodes) {
+        console.log(`\t${node.name} ${node.host}:${node.port}`)
+    }
+}
+
 async function main() {
-    const nodes = readConfig().nodes
+    console.log(process.env.CONFIG_PATH)
+
+    const systemConfig = readConfig(process.env.CONFIG_PATH)
+    const nodes = systemConfig.nodes
     if (nodes.length === 0) {
         console.error('no node metadata found')
         return
     }
+    printNodes(nodes)
     const z = new Client(nodes)
     const exit = false
     const setupCommands = [
-        ['find-master'],
         ['status'],
-    ]
+        ['find-master'],
+        ['request', 'k:v'],
+        ['status']
+    ].reverse()
 
     const nextCommand = async () => {
         const poped = setupCommands.pop()
@@ -84,7 +97,7 @@ async function main() {
                     timestamp: Date.now(),
                     payload: args[0],
                 }
-                const ret = z.send(msg)
+                const ret = await z.send(msg)
                 console.log('request ret: %o', ret)
                 break
             }

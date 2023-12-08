@@ -52,6 +52,7 @@ export type PrepareMsg = {
 };
 
 export type ClientMessage = RequestMsg | QueryStatusMsg;
-export type PeerMessage = ErrorMsg | FindMasterMsg | MasterInfoMsg | PrePrepareMsg | PrepareMsg;
+export type PeerMessage = ErrorMsg | FindMasterMsg | MasterInfoMsg | PrePrepareMsg | PrepareMsg | CommitMsg;
 export type Message = ClientMessage | PeerMessage;
+export type MessageType = Message['type'];
 

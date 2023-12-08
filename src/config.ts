@@ -1,10 +1,15 @@
 import fs from 'fs'
 
-export interface SystemConfig {
+export type SystemConfig = {
     nodes: NodeConfig[]
+    params: ParamConfig
 }
 
-export interface NodeConfig {
+export type ParamConfig = {
+    f: number
+}
+
+export type NodeConfig = {
     name: string
     host: string
     port: number
@@ -12,7 +17,7 @@ export interface NodeConfig {
     prikey: string
 }
 
-export function readConfig(): SystemConfig {
-    const file = 'nodes/nodes.json'
-    return JSON.parse(fs.readFileSync(file).toString()) as SystemConfig
+export function readConfig(path?: string): SystemConfig {
+    const path_ = path ?? 'nodes/config.json'
+    return JSON.parse(fs.readFileSync(path_).toString()) as SystemConfig
 }

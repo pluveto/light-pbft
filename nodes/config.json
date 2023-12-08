@@ -1,4 +1,7 @@
 {
+  "params": {
+    "f": 1
+  },
   "nodes": [
     {
       "name": "s1",

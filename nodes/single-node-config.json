@@ -1,0 +1,14 @@
+{
+  "params": {
+    "f": 0
+  },
+  "nodes": [
+    {
+      "name": "s1",
+      "host": "localhost",
+      "port": 32001,
+      "prikey": "ab02b32c23e0ec0a46f830b5b3c78144bd7137e4a84f213c9882d428eeff019c",
+      "pubkey": "04df2aafab301102fef8ada86a2996222e118a82f95885b699095e164fcc0b051ae213aa799209af85d526b92c684a8906852d12ee7249b81b76d9c1be3829f676"
+    }
+  ]
+}
