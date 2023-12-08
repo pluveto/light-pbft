@@ -6,7 +6,9 @@ export interface Automata<TStatus> {
     status(): TStatus
 }
 
-
+/**
+ * A simple key-value storage automata as an example implementation of Automata.
+ */
 export class KVAutomata implements Automata<ReturnType<KVAutomata['status']>> {
     state: Map<string, string> = new Map()
     history: string[] = []

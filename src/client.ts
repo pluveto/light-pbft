@@ -28,7 +28,9 @@ export class Client {
             this.nodes.set(node.name, client)
         })
     }
-
+    /**
+     * boardcast a message to all nodes
+     */
     async boardcast<T extends Message>(payload: T): Promise<Message[]> {
         const nodes = [...this.nodes.values()]
         return boardcast(nodes, payload)

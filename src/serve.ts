@@ -4,7 +4,7 @@ import { Optional } from './types'
 import { Node } from './node'
 import { KVAutomata } from './automata'
 import { NamedLogger } from './logger'
-function maskPrikeys(name: string, systemConfig: SystemConfig) {
+function maskPriKeys(name: string, systemConfig: SystemConfig) {
     const config = systemConfig.nodes.find((node) => node.name === name)
     if (!config) {
         throw new Error(`node ${name} not found`)
@@ -27,7 +27,7 @@ export async function serve(name: string, systemConfig: SystemConfig) {
     if (!config) {
         throw new Error(`node ${name} not found`)
     }
-    const systemConfigLocal = maskPrikeys(config.name, systemConfig)
+    const systemConfigLocal = maskPriKeys(config.name, systemConfig)
     const node = new Node(config, systemConfigLocal, new KVAutomata(new NamedLogger(config.name).derived('automata')))
     const server = new jayson.Server(node.routes())
     const http = server.http()

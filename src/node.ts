@@ -1,6 +1,5 @@
 import jaysom from 'jayson/promise'
 
-import { Registry } from './registry'
 import { boardcast, createSeqIterator, sha256 } from './util'
 import { CommitMsg, ErrorCode, ErrorMsg, MasterInfoMsg, Message, PrePrepareMsg, PrepareMsg, QueryAutomataMsg, RequestMsg, createErrorMsg } from './message'
 import { NodeConfig, SystemConfig } from './config'
@@ -54,7 +53,6 @@ export class Node<TStatus> {
     logger: NamedLogger
     nodes: Map<string, jaysom.client> = new Map() // name -> client
     view: number = 0
-    registry!: Registry
     systemConfig: SystemConfig
     seq = createSeqIterator()
     status: NodeStatus = NodeStatus.Idle
