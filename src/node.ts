@@ -92,8 +92,12 @@ export class Node<TStatus> {
         })
     }
 
-    getMaster() {
+    get master() {
         return calcMaster(this.view, this.systemConfig.nodes)
+    }
+
+    get name() {
+        return this.config.name
     }
 
     routes() {
@@ -132,7 +136,7 @@ export class Node<TStatus> {
                 return {
                     status: 'ok',
                     view: this.view,
-                    master: this.getMaster().name,
+                    master: this.master.name,
                     automata: this.automata.status(),
                     params: this.systemConfig.params,
                 }
@@ -146,7 +150,7 @@ export class Node<TStatus> {
             'find-master': async () => {
                 const ret: MasterInfoMsg = {
                     type: 'master-info',
-                    master_name: this.getMaster().name,
+                    master_name: this.master.name,
                 }
                 return ret
             },

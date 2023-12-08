@@ -1,8 +1,7 @@
 import chalk from 'chalk'
-import { Client } from '../client'
+import { Client, findMajority } from '../client'
 import { FindMasterMsg, MasterInfoMsg, QueryStatusMsg, RequestMsg } from '../message'
 import { NodeConfig, readConfig } from '../config'
-import { Optional } from '../types'
 import { quote } from '../util'
 
 export async function repl() {
@@ -20,23 +19,7 @@ function printHelp() {
     console.log(chalk.green('find-master'), 'find master node')
 }
 
-function selectMajor<T>(arr: T[]): Optional<T> {
-    const thold = Math.floor(arr.length * 2 / 3)
-    console.log(thold)
 
-    const counter = new Map<string, number>()
-    for (const item of arr) {
-        const encoded = JSON.stringify(item)
-        const count = counter.get(encoded) || 0
-        counter.set(encoded, count + 1)
-    }
-    for (const [item, count] of counter) {
-        if (count > thold) {
-            return JSON.parse(item)
-        }
-    }
-    return undefined
-}
 
 function printNodes(nodes: NodeConfig[]) {
     console.log('nodes:')
@@ -111,7 +94,7 @@ async function main() {
                     type: 'find-master',
                 }
                 const ret = await z.boardcast(msg)
-                const majorRet = selectMajor(ret)
+                const majorRet = findMajority(ret)
                 if (majorRet) {
                     const master = (majorRet as MasterInfoMsg).master_name
                     z.master = master

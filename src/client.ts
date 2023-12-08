@@ -1,7 +1,8 @@
 import { NodeConfig } from './config'
 import jaysom from 'jayson/promise'
-import { Message } from './message'
+import { FindMasterMsg, MasterInfoMsg, Message } from './message'
 import { boardcast } from './util'
+import { Optional } from './types'
 
 
 
@@ -35,4 +36,39 @@ export class Client {
         const nodes = [...this.nodes.values()]
         return boardcast(nodes, payload)
     }
+
+    async findMaster() {
+        const msg: FindMasterMsg = {
+            type: 'find-master',
+        }
+        const ret = await this.boardcast(msg) as MasterInfoMsg[]
+        const master = findMajority(ret.map((item) => item.master_name))
+        return master
+    }
 }
+
+/**
+ * Find the BFT major element in an array, which is the element that appears more than 2/3 times.
+ * 
+ * @param arr array of elements
+ * @returns the major element if exists, undefined otherwise
+ */
+export function findMajority<T>(arr: T[]): Optional<T> {
+    const thold = Math.floor(arr.length * 2 / 3)
+    console.log(thold)
+
+    const counter = new Map<string, number>()
+    for (const item of arr) {
+        const encoded = JSON.stringify(item)
+        const count = counter.get(encoded) || 0
+        counter.set(encoded, count + 1)
+    }
+    for (const [item, count] of counter) {
+        if (count > thold) {
+            return JSON.parse(item)
+        }
+    }
+    return undefined
+}
+
+

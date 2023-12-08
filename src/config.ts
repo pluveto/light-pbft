@@ -6,6 +6,7 @@ export type SystemConfig = {
 }
 
 export type ParamConfig = {
+    // f is the max number of faulty nodes tolerated
     f: number
 }
 
@@ -18,6 +19,5 @@ export type NodeConfig = {
 }
 
 export function readConfig(path?: string): SystemConfig {
-    const path_ = path ?? 'nodes/config.json'
-    return JSON.parse(fs.readFileSync(path_).toString()) as SystemConfig
+    return JSON.parse(fs.readFileSync(path ?? 'nodes/config.json').toString()) as SystemConfig
 }
