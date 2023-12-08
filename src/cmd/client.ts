@@ -60,7 +60,7 @@ async function main() {
     const setupCommands = [
         ['status'],
         ['find-master'],
-        ['request', 'k:v'],
+        ['request', 'key1:value1'],
         ['status']
     ].reverse()
 
@@ -92,6 +92,11 @@ async function main() {
             }
 
             case 'request': {
+                if (!args[0]) {
+                    console.error('request need payload')
+                    console.log('usage: request <payload>')
+                    break
+                }
                 const msg: RequestMsg = {
                     type: 'request',
                     timestamp: Date.now(),
