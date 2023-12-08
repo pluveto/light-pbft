@@ -41,7 +41,7 @@ export class KVAutomata implements Automata<ReturnType<KVAutomata['status']>> {
 
     status() {
         return {
-            state: this.state,
+            state: Object.fromEntries(this.state),
             history: this.history,
         }
     }
