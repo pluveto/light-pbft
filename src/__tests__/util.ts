@@ -58,7 +58,7 @@ export async function createClusterConfig(size: number = 4): Promise<SystemConfi
     return {
         nodes,
         params: {
-            f: (size - 1) / 3
+            f: Math.floor((size - 1) / 3)
         }
     }
 }

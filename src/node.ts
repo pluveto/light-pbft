@@ -1,11 +1,23 @@
 import jaysom from 'jayson/promise'
 
-import { boardcast, createSeqIterator, sha256 } from './util'
-import { CommitMsg, ErrorCode, ErrorMsg, MasterInfoMsg, Message, PrePrepareMsg, PrepareMsg, QueryAutomataMsg, RequestMsg, createErrorMsg } from './message'
+import { boardcast, createSeqIterator, deepEquals, sha256 } from './util'
 import { NodeConfig, SystemConfig } from './config'
 import { Automata } from './automata'
 import { NamedLogger } from './logger'
 import assert from 'assert'
+import {
+    CommitMsg,
+    ErrorCode,
+    ErrorMsg,
+    ErrorWithCode,
+    MasterInfoMsg,
+    Message,
+    PrePrepareMsg,
+    PrepareMsg,
+    QueryAutomataMsg,
+    RequestMsg, createOkMsg
+} from './message'
+import { Optional } from './types'
 
 function calcMaster(view: number, nodes: NodeConfig[]) {
     const masterIndex = view % nodes.length
@@ -38,8 +50,9 @@ export type PromiseHandler<T> = ReturnType<typeof createPromiseHandler<T>>
 
 export enum NodeStatus {
     Idle = 'idle',
-    Prepare = 'prepare',
-    Commit = 'commit',
+    PrePrepared = 'pre-prepare',
+    Prepared = 'prepare',
+    Committed = 'commit',
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -55,27 +68,58 @@ export class Node<TStatus> {
     view: number = 0
     systemConfig: SystemConfig
     seq = createSeqIterator()
-    status: NodeStatus = NodeStatus.Idle
+    _status: NodeStatus = NodeStatus.Idle
+    // logs are all the VALID messages received
+    logs: (PrePrepareMsg | PrepareMsg | CommitMsg)[] = []
 
-    current?: {
-        request: RequestMsg
+    // be careful that the requesting field is only available on the master node
+    // due to the fact that only the master node can receive request message
+    // if you wanna handle the request message on other nodes, you should
+    // search the log and find the corresponding pre-prepare message which
+    // contains the request message
+    requesting?: {
+        msg: RequestMsg
     } & PromiseHandler<void>
+
+    findRequestInLog(digest: string) {
+        return (this.logs.find(
+            x => x.type === 'pre-prepare'
+                && x.sequence === this.seq.peek()
+                && x.digest === digest
+        ) as Optional<PrePrepareMsg>)?.request
+    }
 
     preparing?: {
         digest: string
         msg: PrepareMsg
         count: number
-        prepared: boolean
-    } & PromiseHandler<void>
+    }
+    // & PromiseHandler<void>
 
     commiting?: {
         digest: string
         msg: CommitMsg
         count: number
-        committed: boolean // committed locally
-    } & PromiseHandler<void>
+    }
 
     automata: Automata<TStatus>
+
+    get master() {
+        return calcMaster(this.view, this.systemConfig.nodes)
+    }
+
+    get name() {
+        return this.config.name
+    }
+
+
+    get status() {
+        return this._status
+    }
+    set status(s: NodeStatus) {
+        this._status = s
+        this.logger.debug('status switched to', s)
+    }
 
     constructor(meta: NodeConfig, config: SystemConfig, automata: Automata<TStatus>) {
         this.logger = new NamedLogger(meta.name)
@@ -92,35 +136,31 @@ export class Node<TStatus> {
         })
     }
 
-    get master() {
-        return calcMaster(this.view, this.systemConfig.nodes)
-    }
-
-    get name() {
-        return this.config.name
-    }
-
     routes() {
         const wrapper = (routes: Routes): Routes => {
             return Object.fromEntries(Object.entries(routes).map(([key, handler]): [string, typeof handler] => {
                 return [key, async (msg) => {
                     const logger = this.logger.derived(key)
-                    logger.info('recv', msg)
+                    logger.debug('recv', msg)
                     try {
                         const ret = await handler(msg) as Message
                         if (ret.type === 'error') {
                             logger.error('resp', ret)
                         } else {
-                            logger.info('resp', ret)
+                            logger.debug('resp', ret)
                         }
                         return ret
                     } catch (error) {
-                        const emsg: ErrorMsg = {
+                        logger.error(error)
+                        const emsg: ErrorMsg = error instanceof ErrorWithCode ? {
+                            type: 'error',
+                            code: error.code,
+                            message: error.message,
+                        } : {
                             type: 'error',
                             code: ErrorCode.Unknown,
                             message: (error as Error).message,
                         }
-                        logger.error(error)
                         return emsg
                     }
                 }]
@@ -131,7 +171,7 @@ export class Node<TStatus> {
     }
 
     _routes(): Routes {
-        return {
+        const domainRoutes: Routes = {
             'query-status': async () => {
                 return {
                     status: 'ok',
@@ -154,137 +194,15 @@ export class Node<TStatus> {
                 }
                 return ret
             },
-            'pre-prepare': async (msg: PrePrepareMsg) => {
-                const logger = this.logger.derived('pre-prepare')
-                // todo: validate signatures of m and pre-prepare msg
-                if (msg.view !== this.view) {
-                    return createErrorMsg(ErrorCode.InvalidView)
-                }
+        }
 
-                const digest = await createMsgDigest(msg.request)
-                if (digest !== msg.digest) {
-                    return createErrorMsg(ErrorCode.InvalidDigest)
-                }
-
-                this.status = NodeStatus.Prepare
-                const prepareMsg: PrepareMsg = {
-                    type: 'prepare',
-                    view: this.view,
-                    sequence: msg.sequence,
-                    digest: msg.digest,
-                }
-
-                this.preparing = {
-                    digest: msg.digest,
-                    msg: prepareMsg,
-                    count: 0,
-                    prepared: false,
-                    ...createPromiseHandler<void>('prepare timeout'),
-                }
-                logger.info('boardcast', (prepareMsg))
-                const ret = await this.boardcast(prepareMsg)
-                logger.info('ret', ret)
-                await this.preparing.promise
-                this.preparing = undefined
-
-                return {
-                    message: 'pre-prepared, prepared, committed'
-                }
-            },
-            'prepare': async (msg: PrepareMsg) => {
-                const logger = this.logger.derived('prepare')
-                if (!this.preparing) {
-                    return createErrorMsg(ErrorCode.InvalidStatus, 'no preparing')
-                }
-
-                assert(this.status === NodeStatus.Prepare)
-                if (msg.view !== this.view) {
-                    return createErrorMsg(ErrorCode.InvalidView)
-                }
-
-                if (msg.digest !== this.preparing.digest) {
-                    return createErrorMsg(ErrorCode.InvalidDigest)
-                }
-
-                this.preparing.count++
-                logger.info('count', this.preparing.count)
-                if (this.preparing.count <= 2 * this.systemConfig.params.f) {
-
-                    return {
-                        message: 'preparing'
-                    }
-                }
-                this.preparing.prepared = true
-                this.preparing.resolver()
-                this.status = NodeStatus.Commit
-                logger.info('prepared', this.preparing.msg)
-                const commitMsg: CommitMsg = {
-                    type: 'commit',
-                    view: this.view,
-                    sequence: msg.sequence,
-                    digest: msg.digest,
-                }
-                this.commiting = {
-                    digest: msg.digest,
-                    msg: commitMsg,
-                    count: 0,
-                    committed: false,
-                    ...createPromiseHandler<void>('commit timeout'),
-                }
-                logger.info('boardcast', (commitMsg))
-                const ret = await this.boardcast(commitMsg)
-                logger.info('ret', ret)
-                await this.commiting.promise
-                logger.info('notice committed')
-                this.commiting = undefined
-                return {
-                    message: 'prepared, committed'
-                }
-            },
-            'commit': async (msg: CommitMsg) => {
-                const logger = this.logger.derived('commit')
-                if (!this.commiting) {
-                    return createErrorMsg(ErrorCode.InvalidStatus, 'no commiting')
-                }
-                assert(this.current)
-                // 1. validate signatures of m and commit msg
-                // 2. validate view
-                if (msg.view !== this.view) {
-                    return createErrorMsg(ErrorCode.InvalidView)
-                }
-                // 3. validate sequence
-                if (!this.isValidSeq(msg.sequence)) {
-                    return createErrorMsg(ErrorCode.InvalidSequence,)
-                }
-
-                // 4. validate digest
-                if (this.commiting?.digest !== msg.digest) {
-                    return createErrorMsg(ErrorCode.InvalidDigest)
-                }
-
-                this.commiting.count++
-                logger.info('count', this.commiting.count)
-                if (this.commiting.count <= 2 * this.systemConfig.params.f) {
-                    return {
-                        message: 'commiting'
-                    }
-                }
-
-                logger.info('commiting')
-                this.commiting.committed = true
-                await this.automata.transfer(this.current?.request.payload)
-                this.commiting.resolver()
-
-                return {
-                    message: 'committed'
-                }
-            },
+        const bftRoutes: Routes = {
             'request': async (msg: RequestMsg): Promise<Message> => {
-                while (this.current) {
-                    await this.current.promise
+                while (this.requesting) {
+                    await this.requesting.promise
                 }
-                this.current = {
-                    request: msg,
+                this.requesting = {
+                    msg: msg,
                     ...createPromiseHandler<void>('request timeout'),
                 }
                 const n = this.seq.next()
@@ -296,17 +214,257 @@ export class Node<TStatus> {
                     digest: await createMsgDigest(msg),
                     request: msg,
                 }
-                logger.info('boardcast', (prePrepareMsg))
+                logger.debug('boardcast', (prePrepareMsg))
                 const ret = await this.boardcast(prePrepareMsg)
-                this.logger.derived('request').info('ret', ret)
-                this.current.resolver()
-                this.current = undefined
+                logger.info('ret', ret)
+                this.requesting.resolver()
+                logger.debug('requesting reset')
+                this.requesting = undefined
+                logger.debug('current reset')
+
+                assert.equal(this.status, NodeStatus.Committed)
+                this.status = NodeStatus.Idle
                 return {
                     type: 'ok'
                 }
+            },
+
+            // a pre-prepare should be sent by master and receive only once
+            'pre-prepare': async (msg: PrePrepareMsg) => {
+                const logger = this.logger.derived('pre-prepare')
+                // msg basic validation
+                {
+                    if (msg.view !== this.view) {
+                        throw new ErrorWithCode(ErrorCode.InvalidView)
+                    }
+
+                    const digest = await createMsgDigest(msg.request)
+                    if (digest !== msg.digest) {
+                        throw new ErrorWithCode(ErrorCode.InvalidDigest)
+                    }
+
+                    if (this.logs.find(x => deepEquals(x, msg))) {
+                        return createOkMsg('already pre-prepared')
+                    }
+                }
+
+                // alter status
+                if (this.status !== NodeStatus.Idle) {
+                    throw new ErrorWithCode(ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.Idle}`)
+                }
+
+                // mutate state
+                this.status = NodeStatus.PrePrepared
+                this.logs.push(msg)
+
+                // create and boardcast prepare message
+                const prepareMsg: PrepareMsg = {
+                    type: 'prepare',
+                    view: this.view,
+                    sequence: msg.sequence,
+                    digest: msg.digest,
+                }
+
+                this.preparing = {
+                    digest: msg.digest,
+                    msg: prepareMsg,
+                    count: 0,
+                    // ...createPromiseHandler<void>('prepare timeout'),
+                }
+                logger.debug('boardcast', (prepareMsg))
+                const ret = await this.boardcast(prepareMsg)
+                logger.debug('ret', ret)
+                // await this.preparing.promise
+                assert.equal(this.status, NodeStatus.Committed)
+                assert.equal(this.preparing, undefined)
+
+                return {
+                    message: 'pre-prepared, prepared, committed'
+                }
+            },
+            // prepare messages are sent by all pre-prepared nodes and will be received many times
+            // when a PrepareMsg is received, the tx may have been prepared, and even committed locally (or not)
+            'prepare': async (msg: PrepareMsg) => {
+                const logger = this.logger.derived('prepare')
+                // msg should be pre-prepared
+                const hasAnyPreprepare = this.logs.find(
+                    x => x.digest === msg.digest
+                        && x.view == this.view
+                        && x.sequence === this.seq.peek()
+                )
+                if (!hasAnyPreprepare) {
+                    throw new ErrorWithCode(ErrorCode.InvalidStatus, 'no pre-prepare message found for msg')
+                }
+                // msg may have been prepared
+                if (this.logs.find(x => deepEquals(x, msg))) {
+                    return createOkMsg('already prepared')
+                }
+                // msg may have been committed
+                if (this.logs.find(
+                    x => x.digest === msg.digest
+                        && x.view == this.view
+                        && x.sequence === this.seq.peek()
+                        && x.type === 'commit')) {
+                    return createOkMsg('already committed')
+                }
+                // status validation
+                {
+                    if (!this.findRequestInLog(msg.digest)) {
+                        throw new ErrorWithCode(ErrorCode.InvalidStatus, 'no current request')
+                    }
+                    if (!this.preparing) {
+                        throw new ErrorWithCode(ErrorCode.InvalidStatus, 'no preparing request')
+                    }
+                }
+                //  msg validation
+                {
+                    if (msg.view !== this.view) {
+                        throw new ErrorWithCode(ErrorCode.InvalidView, `msg.view is ${msg.view}, expect ${this.view}`)
+                    }
+
+                    if (msg.digest !== this.preparing.digest) {
+                        throw new ErrorWithCode(ErrorCode.InvalidDigest)
+                    }
+                }
+
+                if (this.logs.find(x => deepEquals(x, msg))) {
+                    return createOkMsg('already prepared')
+                }
+
+                if (!this.preparing) {
+                    return createOkMsg(`not preparing, status is ${this.status}`)
+                }
+
+                if (this.preparing.count > 2 * this.systemConfig.params.f) {
+                    if (this.status !== NodeStatus.Prepared) {
+                        throw new ErrorWithCode(ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.Prepared}`)
+                    }
+                } else {
+                    if (this.status !== NodeStatus.PrePrepared) {
+                        throw new ErrorWithCode(ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.PrePrepared}`)
+                    }
+                }
+
+                // mutate state
+                this.logs.push(msg)
+                this.preparing.count++
+                logger.debug('count', this.preparing.count)
+                if (this.preparing.count <= 2 * this.systemConfig.params.f) {
+                    return {
+                        message: 'preparing'
+                    }
+                }
+
+
+                logger.debug('preparing count enough, prepared')
+                // this.preparing.prepared = true
+                this.status = NodeStatus.Prepared
+                this.preparing = undefined
+
+                // create and boardcast commit message
+                const commitMsg: CommitMsg = {
+                    type: 'commit',
+                    view: this.view,
+                    sequence: msg.sequence,
+                    digest: msg.digest,
+                }
+
+                this.commiting = {
+                    digest: msg.digest,
+                    msg: commitMsg,
+                    count: 0,
+                }
+
+                const ret = await this.boardcast(commitMsg)
+                logger.debug('ret', ret)
+                assert.equal(this.status, NodeStatus.Committed)
+                assert.equal(this.commiting, undefined)
+                logger.debug('notice committed')
+                return {
+                    message: 'prepared, committed'
+                }
+            },
+            // commit messages are sent by all prepared nodes and will be received many times
+            // when a CommitMsg is received, the tx may have been committed locally or not
+            'commit': async (msg: CommitMsg) => {
+                const logger = this.logger.derived('commit')
+
+                if (this.logs.find(x => deepEquals(x, msg))) {
+                    return createOkMsg('already committed')
+                }
+
+                // committed-local checking
+                if (!this.commiting) {
+                    // if not commiting, then it must be committed, but we checked it before, so it's an error
+                    throw new ErrorWithCode(ErrorCode.InvalidStatus, 'not commiting and not committed')
+                }
+
+                if (this.status !== NodeStatus.Prepared) {
+                    throw new ErrorWithCode(ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.Prepared}`)
+                }
+
+                // 1. validate signatures of m and commit msg
+                // 2. validate view
+                if (msg.view !== this.view) {
+                    throw new ErrorWithCode(ErrorCode.InvalidView)
+                }
+                // 3. validate sequence
+                if (!this.isValidSeq(msg.sequence)) {
+                    throw new ErrorWithCode(ErrorCode.InvalidSequence,)
+                }
+
+                // 4. validate digest
+                if (this.commiting?.digest !== msg.digest) {
+                    throw new ErrorWithCode(ErrorCode.InvalidDigest)
+                }
+                if (this.commiting.count === 0) {
+                    assert.equal(this.status, NodeStatus.Prepared)
+                }
+
+                // a pre-prepare should exists in logs
+                const prePrepareMsg = this.logs.find(
+                    x => x.type === 'pre-prepare'
+                        && x.sequence === msg.sequence
+                        && x.digest === msg.digest
+                ) as Optional<PrePrepareMsg>
+
+                if (!prePrepareMsg) {
+                    throw new ErrorWithCode(ErrorCode.InvalidStatus, 'no related pre-prepare message found for commit message')
+                }
+
+                // mutate state
+                this.logs.push(msg)
+                this.commiting.count++
+                logger.debug('count', this.commiting.count)
+                if (this.commiting.count <= 2 * this.systemConfig.params.f) {
+                    return {
+                        message: 'commiting'
+                    }
+                }
+                logger.debug('commiting count enough')
+                const request = this.findRequestInLog(msg.digest)
+                if (!request) {
+                    throw new ErrorWithCode(ErrorCode.InternalError, 'no related pre-prepare message found for commit message')
+                }
+
+                logger.debug('commiting')
+                await this.automata.transfer(request?.payload)
+                logger.debug('commiting reset')
+                this.commiting = undefined
+
+                this.status = NodeStatus.Committed // this state will immediately be reset to idle
+                return {
+                    message: 'committed'
+                }
             }
         }
+
+        return {
+            ...domainRoutes,
+            ...bftRoutes
+        }
     }
+
     async boardcast<T extends Message>(payload: T): Promise<Message[]> {
         const nodes = [...this.nodes.values()]
         return boardcast(nodes, payload)

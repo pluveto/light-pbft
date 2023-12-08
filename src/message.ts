@@ -6,6 +6,7 @@ export enum ErrorCode {
     InvalidDigest = 'invalid-digest',
     InvalidRequest = 'invalid-request',
     InvalidStatus = 'invalid-status',
+    InternalError = 'internal-error',
     Unknown = 'unknown',
 }
 
@@ -23,10 +24,25 @@ export function createErrorMsg(code: ErrorCode, message?: string): ErrorMsg {
     }
 }
 
+export class ErrorWithCode extends Error {
+    code: ErrorCode
+    constructor(code: ErrorCode, message?: string) {
+        super(message)
+        this.code = code
+    }
+}
+
 export type OkMsg = {
     type: 'ok'
     message?: string
 };
+
+export function createOkMsg(message?: string): OkMsg {
+    return {
+        type: 'ok',
+        message,
+    }
+}
 
 export type FindMasterMsg = {
     type: 'find-master'

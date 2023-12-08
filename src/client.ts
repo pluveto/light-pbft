@@ -55,7 +55,6 @@ export class Client {
  */
 export function findMajority<T>(arr: T[]): Optional<T> {
     const thold = Math.floor(arr.length * 2 / 3)
-    console.log(thold)
 
     const counter = new Map<string, number>()
     for (const item of arr) {

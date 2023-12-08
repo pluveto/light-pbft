@@ -1,8 +1,13 @@
 import { NamedLogger } from './logger'
+import { Optional } from './types'
+
+export type ByteLike = string | Buffer | Uint8Array
 
 export interface Automata<TStatus> {
-    transfer(tx: string): void
-    query(key: string): string | undefined
+    // transfer the state machine with a input
+    transfer(tx: ByteLike): void
+    // query the state machine with a command
+    query(key: ByteLike): ByteLike | undefined
     status(): TStatus
 }
 
@@ -30,7 +35,7 @@ export class KVAutomata implements Automata<ReturnType<KVAutomata['status']>> {
         this.logger.info('transferred')
     }
 
-    parse(tx: string): [string, string | undefined] {
+    parse(tx: string): [string, Optional<string>] {
         if (!tx.includes(':')) {
             return [tx, undefined]
         }
@@ -38,7 +43,7 @@ export class KVAutomata implements Automata<ReturnType<KVAutomata['status']>> {
         return [key, value]
     }
 
-    query(command: string): string | undefined {
+    query(command: string): Optional<string> {
         return this.state.get(command)
     }
 
