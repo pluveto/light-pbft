@@ -48,7 +48,7 @@ export function createSeqIterator(max: number = Infinity) {
         }
     }
 }
-export async function boardcast<T extends Message>(clients: jaysom.HttpClient[], payload: T): Promise<Message[]> {
+export async function multicast<T extends Message>(clients: jaysom.HttpClient[], payload: T): Promise<Message[]> {
     const reqs = clients.map((node) => node.request(payload.type, payload))
     const ret = await Promise.all(reqs)
     return ret.map((r) => r.result)
@@ -88,4 +88,27 @@ export function deepEquals(a: any, b: any) {
     }
 
     return true
+}
+
+export function withTimeout<T>(promise: Promise<T>, timeout: number, message: string | Error = 'timed out'): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const timeoutHandle = setTimeout(() => {
+            if (typeof message === 'string') {
+                reject(new Error(message))
+            } else {
+                reject(message)
+            }
+        }, timeout)
+
+        promise.then(
+            (value) => {
+                clearTimeout(timeoutHandle)
+                resolve(value)
+            },
+            (reason) => {
+                clearTimeout(timeoutHandle)
+                reject(reason)
+            }
+        )
+    })
 }

@@ -3,11 +3,12 @@ import { serve } from '../serve'
 import { createClusterConfig } from './util'
 
 describe('2 Nodes Cluster where f = 0', () => {
+    jest.setTimeout(10000)
+
     let client: Client
     let servers: Array<Awaited<ReturnType<typeof serve>>>
 
     beforeEach(async () => {
-        jest.setTimeout(10000)
         const cfg = await createClusterConfig(2)
         expect(cfg.params.f).toBe(0)
         servers = await Promise.all(cfg.nodes.map((node) => serve(node.name, cfg)))

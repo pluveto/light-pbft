@@ -7,6 +7,7 @@ export enum ErrorCode {
     InvalidRequest = 'invalid-request',
     InvalidStatus = 'invalid-status',
     InternalError = 'internal-error',
+    DuplicatedMsg = 'duplicated-msg',
     Unknown = 'unknown',
 }
 
@@ -54,7 +55,7 @@ export type QueryStatusMsg = {
 
 export type MasterInfoMsg = {
     type: 'master-info'
-    master_name: string
+    name: string
 };
 
 export type RequestMsg = {
@@ -73,6 +74,15 @@ export type CommitMsg = {
     view: number
     sequence: number
     digest: string
+    node: string
+}
+
+export type CommittedLogMsg = {
+    type: 'committed'
+    view: number
+    sequence: number
+    digest: string
+    node: string
 }
 
 export type PrePrepareMsg = {
@@ -88,6 +98,15 @@ export type PrepareMsg = {
     view: number
     sequence: number
     digest: string
+    node: string
+};
+
+export type PreparedLogMsg = {
+    type: 'prepared'
+    view: number
+    sequence: number
+    digest: string
+    node: string
 };
 
 export type Message =

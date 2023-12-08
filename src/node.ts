@@ -1,12 +1,13 @@
 import jaysom from 'jayson/promise'
 
-import { boardcast, createSeqIterator, deepEquals, sha256 } from './util'
+import { multicast, createSeqIterator, deepEquals, sha256, withTimeout } from './util'
 import { NodeConfig, SystemConfig } from './config'
 import { Automata } from './automata'
 import { NamedLogger } from './logger'
 import assert from 'assert'
 import {
     CommitMsg,
+    CommittedLogMsg,
     ErrorCode,
     ErrorMsg,
     ErrorWithCode,
@@ -14,6 +15,7 @@ import {
     Message,
     PrePrepareMsg,
     PrepareMsg,
+    PreparedLogMsg,
     QueryAutomataMsg,
     RequestMsg, createOkMsg
 } from './message'
@@ -29,16 +31,31 @@ function createMsgDigest<T extends Message>(msg: T) {
 }
 
 function createPromiseHandler<T>(message?: string, timeout: number = 3000) {
-    let resolver, rejecter
+    let resolver: (value: T | PromiseLike<T>) => void, rejecter: (reason?: Error) => void
+    let timeoutHandle: NodeJS.Timeout
+    let done = false
+
     const promise = new Promise<T>((resolve, reject) => {
-        resolver = resolve
-        rejecter = reject
+        resolver = (value: T | PromiseLike<T>) => {
+            clearTimeout(timeoutHandle)
+            done = true
+            resolve(value)
+        }
+        rejecter = (reason?: Error) => {
+            clearTimeout(timeoutHandle)
+            done = true
+            reject(reason)
+        }
+
         if (timeout > 0) {
-            setTimeout(() => {
-                reject(new Error(message ?? 'timeout'))
+            timeoutHandle = setTimeout(() => {
+                if (!done) {
+                    reject(new Error(message ?? 'timeout'))
+                }
             }, timeout)
         }
     })
+
     return {
         promise,
         resolver: resolver!,
@@ -46,13 +63,13 @@ function createPromiseHandler<T>(message?: string, timeout: number = 3000) {
     }
 }
 
+
 export type PromiseHandler<T> = ReturnType<typeof createPromiseHandler<T>>
 
 export enum NodeStatus {
     Idle = 'idle',
-    PrePrepared = 'pre-prepare',
-    Prepared = 'prepare',
-    Committed = 'commit',
+    PrePrepared = 'pre-prepared',
+    Prepared = 'prepared',
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -61,7 +78,6 @@ type RouteHandler<T extends Message> = (msg: T) => Promise<any>;
 type Routes = { [key: string]: RouteHandler<any> };
 
 export class Node<TStatus> {
-    // address -> connection
     config: NodeConfig
     logger: NamedLogger
     nodes: Map<string, jaysom.client> = new Map() // name -> client
@@ -69,17 +85,19 @@ export class Node<TStatus> {
     systemConfig: SystemConfig
     seq = createSeqIterator()
     _status: NodeStatus = NodeStatus.Idle
-    // logs are all the VALID messages received
-    logs: (PrePrepareMsg | PrepareMsg | CommitMsg)[] = []
+    // logs are all the VALID messages received.
+    // periodicaly cleaned.
+    logs: (PrePrepareMsg | PrepareMsg | CommitMsg | PreparedLogMsg | CommittedLogMsg)[] = []
 
     // be careful that the requesting field is only available on the master node
     // due to the fact that only the master node can receive request message
     // if you wanna handle the request message on other nodes, you should
     // search the log and find the corresponding pre-prepare message which
-    // contains the request message
+    // contains the request message.
     requesting?: {
         msg: RequestMsg
     } & PromiseHandler<void>
+    mutex?: PromiseHandler<void>
 
     findRequestInLog(digest: string) {
         return (this.logs.find(
@@ -190,7 +208,7 @@ export class Node<TStatus> {
             'find-master': async () => {
                 const ret: MasterInfoMsg = {
                     type: 'master-info',
-                    master_name: this.master.name,
+                    name: this.master.name,
                 }
                 return ret
             },
@@ -198,15 +216,19 @@ export class Node<TStatus> {
 
         const bftRoutes: Routes = {
             'request': async (msg: RequestMsg): Promise<Message> => {
-                while (this.requesting) {
-                    await this.requesting.promise
+                const logger = this.logger.derived('request')
+
+                while (this.mutex) {
+                    logger.debug('request mutex waiting')
+                    await this.mutex.promise
+                    logger.debug('request mutex resolved')
                 }
+                this.mutex = createPromiseHandler<void>('request wait timeout', 10 * 1000)
                 this.requesting = {
                     msg: msg,
-                    ...createPromiseHandler<void>('request timeout'),
+                    ...createPromiseHandler<void>('handle user request timeout'),
                 }
                 const n = this.seq.next()
-                const logger = this.logger.derived('request')
                 const prePrepareMsg: PrePrepareMsg = {
                     type: 'pre-prepare',
                     view: this.view,
@@ -217,13 +239,17 @@ export class Node<TStatus> {
                 logger.debug('boardcast', (prePrepareMsg))
                 const ret = await this.boardcast(prePrepareMsg)
                 logger.info('ret', ret)
-                this.requesting.resolver()
-                logger.debug('requesting reset')
-                this.requesting = undefined
-                logger.debug('current reset')
+                logger.debug('pre-prepare boardcasted')
 
-                assert.equal(this.status, NodeStatus.Committed)
-                this.status = NodeStatus.Idle
+                // now await for pre-prepare, prepare and commit
+                await this.requesting.promise
+                this.requesting = undefined
+                logger.debug('requesting reset')
+                assert.equal(this.requesting, undefined)
+                assert.equal(this.status, NodeStatus.Idle)
+                const release = this.mutex.resolver
+                this.mutex = undefined
+                release()
                 return {
                     type: 'ok'
                 }
@@ -244,8 +270,25 @@ export class Node<TStatus> {
                     }
 
                     if (this.logs.find(x => deepEquals(x, msg))) {
-                        return createOkMsg('already pre-prepared')
+                        throw new ErrorWithCode(ErrorCode.DuplicatedMsg)
                     }
+                }
+
+                // if msg already prepared or committed, then return ok
+                if (this.logs.find(
+                    x => x.digest === msg.digest
+                        && x.view == this.view
+                        && x.sequence === msg.sequence
+                        && x.type === 'commit')) {
+                    return createOkMsg('already committed, no need to pre-prepare')
+                }
+
+                if (this.logs.find(
+                    x => x.digest === msg.digest
+                        && x.view == this.view
+                        && x.sequence === msg.sequence
+                        && x.type === 'prepare')) {
+                    return createOkMsg('already prepared, no need to pre-prepare')
                 }
 
                 // alter status
@@ -263,6 +306,7 @@ export class Node<TStatus> {
                     view: this.view,
                     sequence: msg.sequence,
                     digest: msg.digest,
+                    node: this.name,
                 }
 
                 this.preparing = {
@@ -274,12 +318,9 @@ export class Node<TStatus> {
                 logger.debug('boardcast', (prepareMsg))
                 const ret = await this.boardcast(prepareMsg)
                 logger.debug('ret', ret)
-                // await this.preparing.promise
-                assert.equal(this.status, NodeStatus.Committed)
-                assert.equal(this.preparing, undefined)
 
                 return {
-                    message: 'pre-prepared, prepared, committed'
+                    message: 'prepare boardcasted'
                 }
             },
             // prepare messages are sent by all pre-prepared nodes and will be received many times
@@ -295,10 +336,11 @@ export class Node<TStatus> {
                 if (!hasAnyPreprepare) {
                     throw new ErrorWithCode(ErrorCode.InvalidStatus, 'no pre-prepare message found for msg')
                 }
-                // msg may have been prepared
+
                 if (this.logs.find(x => deepEquals(x, msg))) {
-                    return createOkMsg('already prepared')
+                    throw new ErrorWithCode(ErrorCode.DuplicatedMsg, 'duplicated prepare message')
                 }
+
                 // msg may have been committed
                 if (this.logs.find(
                     x => x.digest === msg.digest
@@ -307,13 +349,14 @@ export class Node<TStatus> {
                         && x.type === 'commit')) {
                     return createOkMsg('already committed')
                 }
+
                 // status validation
                 {
                     if (!this.findRequestInLog(msg.digest)) {
                         throw new ErrorWithCode(ErrorCode.InvalidStatus, 'no current request')
                     }
                     if (!this.preparing) {
-                        throw new ErrorWithCode(ErrorCode.InvalidStatus, 'no preparing request')
+                        return createOkMsg('no preparing request')
                     }
                 }
                 //  msg validation
@@ -336,9 +379,7 @@ export class Node<TStatus> {
                 }
 
                 if (this.preparing.count > 2 * this.systemConfig.params.f) {
-                    if (this.status !== NodeStatus.Prepared) {
-                        throw new ErrorWithCode(ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.Prepared}`)
-                    }
+                    throw new ErrorWithCode(ErrorCode.InternalError, 'invalid internal state, this.preparing should be undefined')
                 } else {
                     if (this.status !== NodeStatus.PrePrepared) {
                         throw new ErrorWithCode(ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.PrePrepared}`)
@@ -355,11 +396,30 @@ export class Node<TStatus> {
                     }
                 }
 
+                if (this.logs.find(
+                    x => x.type === 'prepared'
+                        && x.digest === msg.digest
+                        && x.view == this.view
+                        && x.sequence === this.seq.peek()
+                        && x.node === this.name
+                )) {
+                    return createOkMsg('already prepared due to more than 2f prepare messages')
+                }
+
+                const confirm: PreparedLogMsg = {
+                    type: 'prepared',
+                    view: this.view,
+                    sequence: msg.sequence,
+                    digest: msg.digest,
+                    node: this.name,
+                }
+                this.logs.push(confirm)
 
                 logger.debug('preparing count enough, prepared')
                 // this.preparing.prepared = true
                 this.status = NodeStatus.Prepared
                 this.preparing = undefined
+
 
                 // create and boardcast commit message
                 const commitMsg: CommitMsg = {
@@ -367,6 +427,7 @@ export class Node<TStatus> {
                     view: this.view,
                     sequence: msg.sequence,
                     digest: msg.digest,
+                    node: this.name,
                 }
 
                 this.commiting = {
@@ -377,11 +438,8 @@ export class Node<TStatus> {
 
                 const ret = await this.boardcast(commitMsg)
                 logger.debug('ret', ret)
-                assert.equal(this.status, NodeStatus.Committed)
-                assert.equal(this.commiting, undefined)
-                logger.debug('notice committed')
                 return {
-                    message: 'prepared, committed'
+                    message: 'commit boardcasted'
                 }
             },
             // commit messages are sent by all prepared nodes and will be received many times
@@ -389,8 +447,25 @@ export class Node<TStatus> {
             'commit': async (msg: CommitMsg) => {
                 const logger = this.logger.derived('commit')
 
+                // prevent duplicated commit
                 if (this.logs.find(x => deepEquals(x, msg))) {
-                    return createOkMsg('already committed')
+                    throw new ErrorWithCode(ErrorCode.DuplicatedMsg, 'duplicated commit message')
+                }
+
+                if (this.logs.find(
+                    x => x.type === 'committed'
+                        && x.digest === msg.digest
+                        && x.view == this.view
+                        && x.sequence === this.seq.peek()
+                        && x.node === this.name
+                )) {
+                    return createOkMsg('already committed due to more than 2f commit messages')
+                }
+
+                // may have been committed due to enough commit messages, in this case, we'll 
+                if (this.status == NodeStatus.Idle) {
+                    // if idle, then it must be committed, but we checked it before, so it's an error
+                    throw new ErrorWithCode(ErrorCode.InvalidStatus, 'idle and not committed')
                 }
 
                 // committed-local checking
@@ -421,6 +496,10 @@ export class Node<TStatus> {
                     assert.equal(this.status, NodeStatus.Prepared)
                 }
 
+                if (this.commiting.count > 2 * this.systemConfig.params.f) {
+                    throw new ErrorWithCode(ErrorCode.InternalError, 'invalid internal state, this.commiting should be undefined')
+                }
+
                 // a pre-prepare should exists in logs
                 const prePrepareMsg = this.logs.find(
                     x => x.type === 'pre-prepare'
@@ -448,11 +527,25 @@ export class Node<TStatus> {
                 }
 
                 logger.debug('commiting')
-                await this.automata.transfer(request?.payload)
+                await this.automata.transfer(request.payload)
                 logger.debug('commiting reset')
-                this.commiting = undefined
 
-                this.status = NodeStatus.Committed // this state will immediately be reset to idle
+                const confirm: CommittedLogMsg = {
+                    type: 'committed',
+                    view: this.view,
+                    sequence: msg.sequence,
+                    digest: msg.digest,
+                    node: this.name,
+                }
+                this.logs.push(confirm)
+                this.commiting = undefined
+                if (this.master.name === this.name) {
+                    assert(this.requesting !== undefined)
+                    logger.debug('requesting resolving')
+                    this.requesting.resolver()
+                    logger.debug('requesting resolved')
+                }
+                this.status = NodeStatus.Idle
                 return {
                     message: 'committed'
                 }
@@ -465,9 +558,9 @@ export class Node<TStatus> {
         }
     }
 
-    async boardcast<T extends Message>(payload: T): Promise<Message[]> {
+    async boardcast<T extends Message>(payload: T, timeout: number = 3000): Promise<Message[]> {
         const nodes = [...this.nodes.values()]
-        return boardcast(nodes, payload)
+        return withTimeout(multicast(nodes, payload), timeout, 'boardcast timeout')
     }
 
     async isValidSeq(seq: number) {

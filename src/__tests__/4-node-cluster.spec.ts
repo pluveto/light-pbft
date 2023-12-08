@@ -3,11 +3,12 @@ import { serve } from '../serve'
 import { createClusterConfig } from './util'
 
 describe('4 Nodes Cluster where f = 1', () => {
+    jest.setTimeout(10000)
+
     let client: Client
     let servers: Array<Awaited<ReturnType<typeof serve>>>
 
     beforeEach(async () => {
-        jest.setTimeout(10000)
         const cfg = await createClusterConfig(4)
         expect(cfg.params.f).toBe(1)
         servers = await Promise.all(cfg.nodes.map((node) => serve(node.name, cfg)))
@@ -24,7 +25,7 @@ describe('4 Nodes Cluster where f = 1', () => {
         expect(true).toBe(true)
     })
 
-    it.only('should be able to handle request', async () => {
+    it('should be able to handle request', async () => {
         const ret = await client.send({
             type: 'request',
             timestamp: Date.now(),
@@ -46,9 +47,9 @@ describe('4 Nodes Cluster where f = 1', () => {
     })
 
     it('should be able to handle a batch of requests one by one', async () => {
-        const N = 10
+        const numRequest = 10
         const tasks = []
-        for (let i = 0; i < N; i++) {
+        for (let i = 0; i < numRequest; i++) {
             const task = client.send({
                 type: 'request',
                 timestamp: Date.now(),
@@ -58,11 +59,11 @@ describe('4 Nodes Cluster where f = 1', () => {
         }
         const rets = await Promise.all(tasks)
 
-        expect(rets).toEqual(Array(N).fill({
+        expect(rets).toEqual(Array(numRequest).fill({
             type: 'ok',
         }))
 
-        for (let i = 0; i < N; i++) {
+        for (let i = 0; i < numRequest; i++) {
             const status = await client.send({
                 type: 'query-automata',
                 command: `key${i}`,

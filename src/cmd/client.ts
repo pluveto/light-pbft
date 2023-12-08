@@ -96,7 +96,7 @@ async function main() {
                 const ret = await z.boardcast(msg)
                 const majorRet = findMajority(ret)
                 if (majorRet) {
-                    const master = (majorRet as MasterInfoMsg).master_name
+                    const master = (majorRet as MasterInfoMsg).name
                     z.master = master
                     console.log('master is %s', master)
                 } else {

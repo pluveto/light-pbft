@@ -3,11 +3,12 @@ import { serve } from '../serve'
 import { createSingleNodeConfig } from './util'
 
 describe('Single Node', () => {
+    jest.setTimeout(10000)
+
     let client: Client
     let server: Awaited<ReturnType<typeof serve>>
 
     beforeEach(async () => {
-        jest.setTimeout(10000)
         const cfg = await createSingleNodeConfig('node')
         server = await serve('node', cfg)
         client = new Client(cfg.nodes)
