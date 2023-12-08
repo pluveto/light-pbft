@@ -2,6 +2,7 @@ import { NamedLogger } from './logger'
 
 export interface Automata<TStatus> {
     transfer(tx: string): void
+    query(key: string): string | undefined
     status(): TStatus
 }
 
@@ -35,8 +36,8 @@ export class KVAutomata implements Automata<ReturnType<KVAutomata['status']>> {
         return [key, value]
     }
 
-    read(key: string): string | undefined {
-        return this.state.get(key)
+    query(command: string): string | undefined {
+        return this.state.get(command)
     }
 
     status() {

@@ -2,7 +2,7 @@ import jaysom from 'jayson/promise'
 
 import { Registry } from './registry'
 import { boardcast, createSeqIterator, sha256 } from './util'
-import { CommitMsg, ErrorCode, ErrorMsg, MasterInfoMsg, Message, PrePrepareMsg, PrepareMsg, RequestMsg, createErrorMsg } from './message'
+import { CommitMsg, ErrorCode, ErrorMsg, MasterInfoMsg, Message, PrePrepareMsg, PrepareMsg, QueryAutomataMsg, RequestMsg, createErrorMsg } from './message'
 import { NodeConfig, SystemConfig } from './config'
 import { Automata } from './automata'
 import { NamedLogger } from './logger'
@@ -139,6 +139,12 @@ export class Node<TStatus> {
                     params: this.systemConfig.params,
                 }
             },
+            'query-automata': async ({ command }: QueryAutomataMsg) => {
+                return {
+                    type: 'ok',
+                    message: await this.automata.query(command),
+                }
+            },
             'find-master': async () => {
                 const ret: MasterInfoMsg = {
                     type: 'master-info',
@@ -272,9 +278,8 @@ export class Node<TStatus> {
                 }
             },
             'request': async (msg: RequestMsg): Promise<Message> => {
-                if (this.current) {
+                while (this.current) {
                     await this.current.promise
-                    assert(this.current === undefined)
                 }
                 this.current = {
                     request: msg,
@@ -293,6 +298,7 @@ export class Node<TStatus> {
                 const ret = await this.boardcast(prePrepareMsg)
                 this.logger.derived('request').info('ret', ret)
                 this.current.resolver()
+                this.current = undefined
                 return {
                     type: 'ok'
                 }

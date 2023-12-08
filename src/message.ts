@@ -47,6 +47,11 @@ export type RequestMsg = {
     payload: string
 };
 
+export type QueryAutomataMsg = {
+    type: 'query-automata'
+    command: string
+};
+
 export type CommitMsg = {
     type: 'commit'
     view: number
@@ -69,22 +74,20 @@ export type PrepareMsg = {
     digest: string
 };
 
-export type ClientMessage =
-    | RequestMsg
+export type Message =
+    // General
+    | ErrorMsg
+    | OkMsg
+    // Domain specific
+    | FindMasterMsg
+    | MasterInfoMsg
     | QueryStatusMsg
-
-export type PeerMessage =
+    | QueryAutomataMsg
+    // for PBFT
+    | RequestMsg
     | PrePrepareMsg
     | PrepareMsg
     | CommitMsg
-
-export type Message =
-    | ErrorMsg
-    | OkMsg
-    | FindMasterMsg
-    | MasterInfoMsg
-    | ClientMessage
-    | PeerMessage
 
 
 export type MessageType = Message['type'];
