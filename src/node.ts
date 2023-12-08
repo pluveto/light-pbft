@@ -17,14 +17,14 @@ function createMsgDigest<T extends Message>(msg: T) {
     return sha256(JSON.stringify(msg))
 }
 
-function createPromiseHandler<T>(timeout: number = 3000) {
+function createPromiseHandler<T>(message?: string, timeout: number = 3000) {
     let resolver, rejecter
     const promise = new Promise<T>((resolve, reject) => {
         resolver = resolve
         rejecter = reject
         if (timeout > 0) {
             setTimeout(() => {
-                reject(new Error('timeout'))
+                reject(new Error(message ?? 'timeout'))
             }, timeout)
         }
     })
@@ -171,7 +171,7 @@ export class Node<TStatus> {
                     msg: prepareMsg,
                     count: 0,
                     prepared: false,
-                    ...createPromiseHandler<void>(),
+                    ...createPromiseHandler<void>('prepare timeout'),
                 }
                 logger.info('boardcast', (prepareMsg))
                 const ret = await this.boardcast(prepareMsg)
@@ -221,7 +221,7 @@ export class Node<TStatus> {
                     msg: commitMsg,
                     count: 0,
                     committed: false,
-                    ...createPromiseHandler<void>(),
+                    ...createPromiseHandler<void>('commit timeout'),
                 }
                 logger.info('boardcast', (commitMsg))
                 const ret = await this.boardcast(commitMsg)
@@ -274,10 +274,11 @@ export class Node<TStatus> {
             'request': async (msg: RequestMsg): Promise<Message> => {
                 if (this.current) {
                     await this.current.promise
+                    assert(this.current === undefined)
                 }
                 this.current = {
                     request: msg,
-                    ...createPromiseHandler<void>(),
+                    ...createPromiseHandler<void>('request timeout'),
                 }
                 const n = this.seq.next()
                 const logger = this.logger.derived('request')
@@ -291,6 +292,7 @@ export class Node<TStatus> {
                 logger.info('boardcast', (prePrepareMsg))
                 const ret = await this.boardcast(prePrepareMsg)
                 this.logger.derived('request').info('ret', ret)
+                this.current.resolver()
                 return {
                     type: 'ok'
                 }
