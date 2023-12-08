@@ -17,6 +17,22 @@ function createMsgDigest<T extends Message>(msg: T) {
     return sha256(JSON.stringify(msg))
 }
 
+function createPromise<T>(timeout: number = 3000) {
+    let resolver
+    const promise = new Promise<T>((resolve, reject) => {
+        resolver = resolve
+        if (timeout > 0) {
+            setTimeout(() => {
+                reject(new Error('timeout'))
+            }, timeout)
+        }
+    })
+    return {
+        promise,
+        resolver: resolver!
+    }
+}
+
 export enum NodeStatus {
     Idle = 'idle',
     Prepare = 'prepare',
@@ -30,23 +46,30 @@ type Routes = { [key: string]: RouteHandler<any> };
 
 export class Node<TStatus> {
     // address -> connection
-    meta: NodeConfig
+    config: NodeConfig
     logger: NamedLogger
     nodes: Map<string, jaysom.client> = new Map() // name -> client
     view: number = 0
     registry!: Registry
-    config: SystemConfig
+    systemConfig: SystemConfig
     seq = createSeqIterator()
     status: NodeStatus = NodeStatus.Idle
     params = {
         f: 1, // max fault node count
     }
-    reqMsg?: RequestMsg
+    requestQueue: RequestMsg[] = []
+    current?: {
+        request: RequestMsg
+        promise: Promise<void>
+        resolver: () => void
+    }
     preparing?: {
         digest: string
         msg: PrepareMsg
         count: number
         prepared: boolean
+        promise: Promise<void>
+        resolver: () => void
     }
 
     commiting?: {
@@ -62,12 +85,12 @@ export class Node<TStatus> {
 
     constructor(meta: NodeConfig, config: SystemConfig, automata: Automata<TStatus>) {
         this.logger = new NamedLogger(meta.name)
-        this.meta = meta
-        this.config = config
+        this.config = meta
+        this.systemConfig = config
         this.automata = automata
         this.params = config.params
 
-        this.config.nodes.map((node) => {
+        this.systemConfig.nodes.map((node) => {
             const client = jaysom.client.http({
                 host: node.host,
                 port: node.port,
@@ -77,14 +100,7 @@ export class Node<TStatus> {
     }
 
     getMaster() {
-        return calcMaster(this.view, this.config.nodes)
-    }
-
-    reset() {
-        this.status = NodeStatus.Idle
-        this.preparing = undefined
-        this.commiting = undefined
-        this.reqMsg = undefined
+        return calcMaster(this.view, this.systemConfig.nodes)
     }
 
     routes() {
@@ -150,15 +166,19 @@ export class Node<TStatus> {
                     sequence: msg.sequence,
                     digest: msg.digest,
                 }
-
                 this.preparing = {
                     digest: msg.digest,
                     msg: prepareMsg,
                     count: 0,
                     prepared: false,
+                    ...createPromise<void>(),
                 }
+                logger.info('boardcast', (prepareMsg))
                 const ret = await this.boardcast(prepareMsg)
                 logger.info('ret', ret)
+                await this.preparing.promise
+                logger.info('prepared')
+                this.preparing = undefined
             },
             'prepare': async (msg: PrepareMsg) => {
                 const logger = this.logger.derived('prepare')
@@ -177,45 +197,45 @@ export class Node<TStatus> {
 
                 this.preparing.count++
                 logger.info('count', this.preparing.count)
-                if (this.preparing.count > 2 * this.params.f) {
-                    this.preparing.prepared = true
-                    this.status = NodeStatus.Commit
-                    logger.info('prepared', this.preparing.msg)
-                    const commitMsg: CommitMsg = {
-                        type: 'commit',
-                        view: this.view,
-                        sequence: msg.sequence,
-                        digest: msg.digest,
+                if (this.preparing.count <= 2 * this.params.f) {
+
+                    return {
+                        message: 'preparing'
                     }
-                    let resolver
-                    const promise = new Promise<void>((resolve, reject) => {
-                        resolver = resolve
-                        setTimeout(() => {
-                            reject(new Error('timeout'))
-                        }, 1000)
-                    })
-                    this.commiting = {
-                        digest: msg.digest,
-                        msg: commitMsg,
-                        count: 0,
-                        committed: false,
-                        promise,
-                        resolver: resolver!
-                    }
-                    const ret = await this.boardcast(commitMsg)
-                    logger.info('ret', ret)
-                    await this.commiting.promise
-                    logger.info('notice committed, reset')
-                    this.reset()
                 }
-                return {}
+                this.preparing.prepared = true
+                this.preparing.resolver()
+                this.status = NodeStatus.Commit
+                logger.info('prepared', this.preparing.msg)
+                const commitMsg: CommitMsg = {
+                    type: 'commit',
+                    view: this.view,
+                    sequence: msg.sequence,
+                    digest: msg.digest,
+                }
+                this.commiting = {
+                    digest: msg.digest,
+                    msg: commitMsg,
+                    count: 0,
+                    committed: false,
+                    ...createPromise<void>(),
+                }
+                logger.info('boardcast', (commitMsg))
+                const ret = await this.boardcast(commitMsg)
+                logger.info('ret', ret)
+                await this.commiting.promise
+                logger.info('notice committed')
+                this.commiting = undefined
+                return {
+                    message: 'prepared, committed'
+                }
             },
             'commit': async (msg: CommitMsg) => {
                 const logger = this.logger.derived('commit')
                 if (!this.commiting) {
                     throw new Error('no commiting')
                 }
-                if (!this.reqMsg) {
+                if (!this.current) {
                     throw new Error('no reqMsg set')
                 }
                 // 1. validate signatures of m and commit msg
@@ -235,19 +255,34 @@ export class Node<TStatus> {
 
                 this.commiting.count++
                 logger.info('count', this.commiting.count)
-                if (this.commiting.count > 2 * this.params.f) {
-                    logger.info('commiting')
-                    await this.automata.transfer(this.reqMsg?.payload)
-                    logger.info('committed', this.reqMsg)
-                    this.commiting.committed = true
-                    this.commiting.resolver()
-                    logger.info('to reset')
+                if (this.commiting.count <= 2 * this.params.f) {
+
+                    return {
+                        message: 'commiting'
+                    }
                 }
 
-                return {}
+                logger.info('commiting')
+                await this.automata.transfer(this.current?.request.payload)
+                logger.info('committed', this.current)
+                this.commiting.committed = true
+                this.commiting.resolver()
+                logger.info('to reset')
+
+                return {
+                    message: 'committed'
+                }
             },
             'request': async (msg: RequestMsg) => {
+                if (this.current) {
+                    await this.current.promise
+                }
+                this.current = {
+                    request: msg,
+                    ...createPromise<void>(),
+                }
                 const n = this.seq.next()
+                const logger = this.logger.derived('request')
                 const prePrepareMsg: PrePrepareMsg = {
                     type: 'pre-prepare',
                     view: this.view,
@@ -255,10 +290,12 @@ export class Node<TStatus> {
                     digest: await createMsgDigest(msg),
                     request: msg,
                 }
-                this.reqMsg = msg
+                logger.info('boardcast', (prePrepareMsg))
                 const ret = await this.boardcast(prePrepareMsg)
                 this.logger.derived('request').info('ret', ret)
-                return {}
+                return {
+                    message: 'ok'
+                }
             }
         }
     }
