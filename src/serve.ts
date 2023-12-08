@@ -30,10 +30,27 @@ export async function serve(name: string, systemConfig: SystemConfig) {
     const systemConfigLocal = maskPrikeys(config.name, systemConfig)
     const node = new Node(config, systemConfigLocal, new KVAutomata(new NamedLogger(config.name).derived('automata')))
     const server = new jayson.Server(node.routes())
-    server.http().listen({
-        host: config.host,
-        port: config.port,
-    }, () => {
-        console.log(`${config.name} is listening on ${config.host}:${config.port}`)
+    const http = server.http()
+    await new Promise<void>((resolve) => {
+        http.listen({
+            host: config.host,
+            port: config.port,
+        }, () => {
+            console.log(`${config.name} is listening on ${config.host}:${config.port}`)
+            resolve()
+        })
     })
+
+    return {
+        node,
+        close: () => new Promise<void>((resolve) => {
+            http.close((err) => {
+                if (err) {
+                    console.error(err)
+                }
+                console.log(`${config.name} is closed`)
+                resolve()
+            })
+        })
+    }
 }
