@@ -2,7 +2,8 @@ import * as net from 'net'
 import jaysom from 'jayson/promise'
 import crypto from 'crypto'
 import { Message } from './message'
-
+import * as elliptic from 'elliptic'
+const ec = new elliptic.ec('secp256k1')
 
 export function getAvailablePort(): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -51,4 +52,19 @@ export async function boardcast<T extends Message>(clients: jaysom.HttpClient[],
     const reqs = clients.map((node) => node.request(payload.type, payload))
     const ret = await Promise.all(reqs)
     return ret.map((r) => r.result)
+}
+
+
+export function genKeyPair() {
+    const keyPair = ec.genKeyPair()
+    return {
+        prikey: keyPair.getPrivate('hex'),
+        pubkey: keyPair.getPublic('hex')
+    }
+}
+
+export function sleep(ms: number) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms)
+    })
 }
