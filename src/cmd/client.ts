@@ -77,7 +77,7 @@ async function main() {
     }
 
     while (!exit) {
-        const [cmd, args] = await nextCommand()
+        const [cmd, ...args] = await nextCommand()
         switch (cmd) {
             case 'help':
                 printHelp()
