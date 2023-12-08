@@ -44,3 +44,21 @@ export async function createSingleNodeConfig(name: string = 'node'): Promise<Sys
         }
     }
 }
+
+export async function createClusterConfig(size: number = 4): Promise<SystemConfig> {
+    const nodes = []
+    for (let i = 0; i < size; i++) {
+        nodes.push({
+            name: `node${i}`,
+            host: 'localhost',
+            port: await findPort(),
+            ...genKeyPair(),
+        })
+    }
+    return {
+        nodes,
+        params: {
+            f: (size - 1) / 3
+        }
+    }
+}
