@@ -1,13 +1,31 @@
 export enum ErrorCode {
-    NOT_MASTER = 'not-master',
-    INVALID_TYPE = 'invalid-type',
-    UNKNOWN = 'unknown',
+    NotMaster = 'not-master',
+    InvalidType = 'invalid-type',
+    InvalidView = 'invalid-view',
+    InvalidSequence = 'invalid-sequence',
+    InvalidDigest = 'invalid-digest',
+    InvalidRequest = 'invalid-request',
+    InvalidStatus = 'invalid-status',
+    Unknown = 'unknown',
 }
 
 export type ErrorMsg = {
     type: 'error'
     code: ErrorCode
-    message: string
+    message?: string
+};
+
+export function createErrorMsg(code: ErrorCode, message?: string): ErrorMsg {
+    return {
+        type: 'error',
+        code,
+        message,
+    }
+}
+
+export type OkMsg = {
+    type: 'ok'
+    message?: string
 };
 
 export type FindMasterMsg = {
@@ -51,8 +69,23 @@ export type PrepareMsg = {
     digest: string
 };
 
-export type ClientMessage = RequestMsg | QueryStatusMsg;
-export type PeerMessage = ErrorMsg | FindMasterMsg | MasterInfoMsg | PrePrepareMsg | PrepareMsg | CommitMsg;
-export type Message = ClientMessage | PeerMessage;
+export type ClientMessage =
+    | RequestMsg
+    | QueryStatusMsg
+
+export type PeerMessage =
+    | PrePrepareMsg
+    | PrepareMsg
+    | CommitMsg
+
+export type Message =
+    | ErrorMsg
+    | OkMsg
+    | FindMasterMsg
+    | MasterInfoMsg
+    | ClientMessage
+    | PeerMessage
+
+
 export type MessageType = Message['type'];
 
