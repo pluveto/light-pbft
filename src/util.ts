@@ -115,3 +115,44 @@ export function withTimeout<T>(promise: Promise<T>, timeout: number, message: st
         )
     })
 }
+
+
+export function createMsgDigest<T extends Message>(msg: T) {
+    return sha256(JSON.stringify(msg))
+}
+
+export function createPromiseHandler<T>(message?: string, timeout: number = 3000) {
+    let resolver: (value: T | PromiseLike<T>) => void, rejecter: (reason?: Error) => void
+    let timeoutHandle: NodeJS.Timeout
+    let done = false
+
+    const promise = new Promise<T>((resolve, reject) => {
+        resolver = (value: T | PromiseLike<T>) => {
+            clearTimeout(timeoutHandle)
+            done = true
+            resolve(value)
+        }
+        rejecter = (reason?: Error) => {
+            clearTimeout(timeoutHandle)
+            done = true
+            reject(reason)
+        }
+
+        if (timeout > 0) {
+            timeoutHandle = setTimeout(() => {
+                if (!done) {
+                    reject(new Error(message ?? 'timeout'))
+                }
+            }, timeout)
+        }
+    })
+
+    return {
+        promise,
+        resolver: resolver!,
+        rejecter: rejecter!
+    }
+}
+
+
+export type PromiseHandler<T> = ReturnType<typeof createPromiseHandler<T>>

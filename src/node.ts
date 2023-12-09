@@ -1,7 +1,7 @@
 import jaysom from 'jayson/promise'
 import { Mutex } from 'async-mutex'
 
-import { multicast, createSeqIterator, deepEquals, sha256, withTimeout } from './util'
+import { multicast, createSeqIterator, deepEquals, withTimeout, PromiseHandler, createMsgDigest, createPromiseHandler } from './util'
 import { NodeConfig, SystemConfig } from './config'
 import { Automata } from './automata'
 import { NamedLogger } from './logger'
@@ -26,46 +26,6 @@ function calcMaster(view: number, nodes: NodeConfig[]) {
     const masterIndex = view % nodes.length
     return nodes[masterIndex]
 }
-
-function createMsgDigest<T extends Message>(msg: T) {
-    return sha256(JSON.stringify(msg))
-}
-
-function createPromiseHandler<T>(message?: string, timeout: number = 3000) {
-    let resolver: (value: T | PromiseLike<T>) => void, rejecter: (reason?: Error) => void
-    let timeoutHandle: NodeJS.Timeout
-    let done = false
-
-    const promise = new Promise<T>((resolve, reject) => {
-        resolver = (value: T | PromiseLike<T>) => {
-            clearTimeout(timeoutHandle)
-            done = true
-            resolve(value)
-        }
-        rejecter = (reason?: Error) => {
-            clearTimeout(timeoutHandle)
-            done = true
-            reject(reason)
-        }
-
-        if (timeout > 0) {
-            timeoutHandle = setTimeout(() => {
-                if (!done) {
-                    reject(new Error(message ?? 'timeout'))
-                }
-            }, timeout)
-        }
-    })
-
-    return {
-        promise,
-        resolver: resolver!,
-        rejecter: rejecter!
-    }
-}
-
-
-export type PromiseHandler<T> = ReturnType<typeof createPromiseHandler<T>>
 
 export enum NodeStatus {
     Idle = 'idle',
