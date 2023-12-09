@@ -1,0 +1,64 @@
+import { Logger } from './logger'
+import { LogMessage } from './message'
+import { Optional } from './types'
+
+
+type DigestFn = (msg: LogMessage) => string
+
+type LogEntry = [string, LogMessage]
+
+export class Logs {
+    entries: LogEntry[] = []
+    digest: DigestFn
+    logger: Logger
+
+    constructor(logger: Logger, digest: DigestFn) {
+        this.logger = logger
+        this.digest = digest
+    }
+
+    async append(msg: LogMessage) {
+        const digest = this.digest(msg)
+        const entry: LogEntry = [digest, msg]
+        this.logger.debug('appending', entry)
+        this.entries.push(entry)
+    }
+
+    select<T extends LogMessage>(predicate: (msg: LogMessage) => boolean): T[] {
+        return this.entries.filter(([, msg]) => predicate(msg)).map(([, msg]) => msg) as T[]
+    }
+
+    count(predicate: (msg: LogMessage) => boolean): number {
+        return this.entries.filter(([, msg]) => predicate(msg)).length
+    }
+
+    first<T extends LogMessage>(predicate: (msg: LogMessage) => boolean) {
+        for (const [, msg] of this.entries) {
+            if (predicate(msg)) {
+                return msg as T
+            }
+        }
+
+        return undefined
+    }
+
+    exists(Logmessage: LogMessage): boolean {
+        const digest = this.digest(Logmessage)
+        return this.entries.some(([d]) => d === digest)
+    }
+
+    last<T extends LogMessage>(predicate: (msg: LogMessage) => boolean): Optional<T> {
+        for (let i = this.entries.length - 1; i >= 0; i--) {
+            const [, msg] = this.entries[i]
+            if (predicate(msg)) {
+                return msg as T
+            }
+        }
+
+        return undefined
+    }
+
+    clear(predicate: (msg: LogMessage) => boolean): void {
+        this.entries = this.entries.filter(([, msg]) => !predicate(msg))
+    }
+}

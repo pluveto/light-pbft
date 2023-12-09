@@ -17,7 +17,7 @@ export type ErrorMsg = {
     message?: string
 };
 
-export function createErrorMsg(code: ErrorCode, message?: string): ErrorMsg {
+export function createErrorMsg(code: ErrorCode, message?: string): Message {
     return {
         type: 'error',
         code,
@@ -30,6 +30,12 @@ export class ErrorWithCode extends Error {
     constructor(code: ErrorCode, message?: string) {
         super(message)
         this.code = code
+    }
+}
+
+export function requires(condition: boolean, code: ErrorCode, message?: string) {
+    if (!condition) {
+        throw new ErrorWithCode(code, message)
     }
 }
 
@@ -109,7 +115,53 @@ export type PreparedLogMsg = {
     node: string
 };
 
+// view change
+
+export type CheckpointMsg = {
+    type: 'checkpoint'
+    sequence: number
+    digest: string // digest of the state machine
+    node: string
+}
+
+export type ViewChangeMsg = {
+    type: 'view-change'
+    view: number // the view to change to
+    node: string
+    sequence: number
+    stableProof: CommittedLogMsg[] // 2f+1 stable logs
+    P: Pm[]
+}
+
+export type Pm = {
+    prePrepareMsgs: PrePrepareMsg[]
+    prepareMsgs: PrepareMsg[]
+}
+
+export type NewViewMsg = {
+    type: 'new-view'
+    view: number
+    sequence: number
+    V: ViewChangeMsg[] // 2f+1 view change msgs
+    O: PrePrepareMsg[] // 2f+1 pre-prepare msgs
+}
+
+export type LogMessage =
+    // for PBFT
+    | PrePrepareMsg
+    | PrepareMsg
+    | CommitMsg
+    // local log
+    | CommittedLogMsg
+    | PreparedLogMsg
+    // for view change
+    | CheckpointMsg
+    | ViewChangeMsg
+    | NewViewMsg
+
 export type Message =
+    | RequestMsg
+    | LogMessage
     // General
     | ErrorMsg
     | OkMsg
@@ -118,11 +170,6 @@ export type Message =
     | MasterInfoMsg
     | QueryStatusMsg
     | QueryAutomataMsg
-    // for PBFT
-    | RequestMsg
-    | PrePrepareMsg
-    | PrepareMsg
-    | CommitMsg
 
 
 export type MessageType = Message['type'];

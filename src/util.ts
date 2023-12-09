@@ -24,7 +24,7 @@ export function getAvailablePort(): Promise<number> {
         })
     })
 }
-export async function sha256(data: string): Promise<string> {
+export function sha256(data: string): string {
     const hash = crypto.createHash('sha256')
     hash.update(data)
     return hash.digest('hex')
@@ -117,7 +117,7 @@ export function withTimeout<T>(promise: Promise<T>, timeout: number, message: st
 }
 
 
-export function createMsgDigest<T extends Message>(msg: T) {
+export function digestMsg<T extends Message>(msg: T) {
     return sha256(JSON.stringify(msg))
 }
 

@@ -40,7 +40,8 @@ export async function createSingleNodeConfig(name: string = 'node'): Promise<Sys
             }
         ],
         params: {
-            f: 0
+            f: 0,
+            k: 10,
         }
     }
 }
@@ -55,10 +56,13 @@ export async function createClusterConfig(size: number = 4): Promise<SystemConfi
             ...genKeyPair(),
         })
     }
+    const f = Math.floor((size - 1) / 3)
+    const k = f * 30
     return {
         nodes,
         params: {
-            f: Math.floor((size - 1) / 3)
+            f,
+            k
         }
     }
 }

@@ -1,4 +1,13 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import chalk from 'chalk'
+
+export type Logger = {
+    info: (...args: any[]) => void
+    warn: (...args: any[]) => void
+    error: (...args: any[]) => void
+    debug: (...args: any[]) => void
+    trace: (...args: any[]) => void
+}
 
 export class NamedLogger {
     constructor(private name: string) { }

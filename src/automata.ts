@@ -1,5 +1,6 @@
-import { NamedLogger } from './logger'
+import { Logger } from './logger'
 import { Optional } from './types'
+import crypto from 'crypto'
 
 export type ByteLike = string | Buffer | Uint8Array
 
@@ -9,6 +10,7 @@ export interface Automata<TStatus> {
     // query the state machine with a command
     query(key: ByteLike): ByteLike | undefined
     status(): TStatus
+    digest(): string
 }
 
 /**
@@ -18,9 +20,9 @@ export class KVAutomata implements Automata<ReturnType<KVAutomata['status']>> {
     state: Map<string, string> = new Map()
     history: string[] = []
     height: number = 0
-    logger: NamedLogger
-
-    constructor(logger: NamedLogger) {
+    logger: Logger
+    hash = crypto.createHash('sha256')
+    constructor(logger: Logger) {
         this.logger = logger
     }
     transfer(tx: string) {
@@ -31,6 +33,7 @@ export class KVAutomata implements Automata<ReturnType<KVAutomata['status']>> {
         } else {
             this.state.set(key, value)
         }
+        this.hash.update(tx)
         this.history.push(tx)
         this.logger.info('transferred')
     }
@@ -54,4 +57,7 @@ export class KVAutomata implements Automata<ReturnType<KVAutomata['status']>> {
         }
     }
 
+    digest(): string {
+        return this.hash.digest('hex')
+    }
 }

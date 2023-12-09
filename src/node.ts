@@ -1,7 +1,7 @@
 import jaysom from 'jayson/promise'
 import { Mutex } from 'async-mutex'
 
-import { multicast, createSeqIterator, deepEquals, withTimeout, PromiseHandler, createMsgDigest, createPromiseHandler } from './util'
+import { multicast, createSeqIterator, withTimeout, PromiseHandler, digestMsg, createPromiseHandler } from './util'
 import { NodeConfig, SystemConfig } from './config'
 import { Automata } from './automata'
 import { NamedLogger } from './logger'
@@ -10,7 +10,6 @@ import {
     CommitMsg,
     CommittedLogMsg,
     ErrorCode,
-    ErrorMsg,
     ErrorWithCode,
     MasterInfoMsg,
     Message,
@@ -18,9 +17,10 @@ import {
     PrepareMsg,
     PreparedLogMsg,
     QueryAutomataMsg,
-    RequestMsg, createOkMsg
+    RequestMsg, createErrorMsg, createOkMsg, requires, CheckpointMsg
 } from './message'
 import { Optional } from './types'
+import { Logs } from './logs'
 
 function calcMaster(view: number, nodes: NodeConfig[]) {
     const masterIndex = view % nodes.length
@@ -48,46 +48,44 @@ export class Node<TStatus> {
     // is equal to the sequence number of the last stable checkpoint.
     lowWaterMark = 0
     get highWaterMark() {
-        return this.lowWaterMark + (this.systemConfig.params.k ?? 1000)
+        return this.lowWaterMark + this.systemConfig.params.k
     }
-    // logs are all the VALID messages received.
-    // periodicaly cleaned.
-    logs: (PrePrepareMsg | PrepareMsg | CommitMsg | PreparedLogMsg | CommittedLogMsg)[] = []
+    get lastStableSeq() {
+        return this.lowWaterMark
+    }
+    // logs are all the VALID messages received. it periodically get cleaned.
+    // the logs work as a buffer, and entries are used to vote, validate
+    logs!: Logs
 
-    // be careful that the requesting field is only available on the master node
-    // due to the fact that only the master node can receive request message
-    // if you wanna handle the request message on other nodes, you should
-    // search the log and find the corresponding pre-prepare message which
-    // contains the request message.
-    requesting?: {
-        msg: RequestMsg
-    } & PromiseHandler<void>
     mutex = new Mutex()
 
-    findRequestInLog(digest: string) {
-        return (this.logs.find(
+    getRequest(digest: string) {
+        return (this.logs.first(
             x => x.type === 'pre-prepare'
                 && x.sequence === this.seq.peek()
                 && x.digest === digest
         ) as Optional<PrePrepareMsg>)?.request
     }
 
-    preparing?: {
-        digest: string
-        msg: PrepareMsg
-        count: number
+    _height = 0
+
+    get height() {
+        return this._height
     }
 
-    commiting?: {
-        digest: string
-        msg: CommitMsg
-        count: number
+    set height(h: number) {
+        this._height = h
+        this.logger.debug('height changed to', h)
     }
 
     automata: Automata<TStatus>
 
     get master() {
         return calcMaster(this.view, this.systemConfig.nodes)
+    }
+
+    isMaster() {
+        return this.master.name === this.name
     }
 
     get name() {
@@ -105,6 +103,7 @@ export class Node<TStatus> {
 
     constructor(meta: NodeConfig, config: SystemConfig, automata: Automata<TStatus>) {
         this.logger = new NamedLogger(meta.name)
+        this.logs = new Logs(this.logger.derived('log'), digestMsg)
         this.config = meta
         this.systemConfig = config
         this.automata = automata
@@ -122,7 +121,7 @@ export class Node<TStatus> {
         const wrapper = (routes: Routes): Routes => {
             return Object.fromEntries(Object.entries(routes).map(([key, handler]): [string, typeof handler] => {
                 return [key, async (msg) => {
-                    const logger = this.logger.derived(key)
+                    const logger = this.logger.derived('routes/' + key)
                     logger.debug('recv', msg)
                     try {
                         const ret = await handler(msg) as Message
@@ -134,22 +133,57 @@ export class Node<TStatus> {
                         return ret
                     } catch (error) {
                         logger.error(error)
-                        const emsg: ErrorMsg = error instanceof ErrorWithCode ? {
-                            type: 'error',
-                            code: error.code,
-                            message: error.message,
-                        } : {
+                        const ret = error instanceof ErrorWithCode ? createErrorMsg(error.code, error.message) : {
                             type: 'error',
                             code: ErrorCode.Unknown,
                             message: (error as Error).message,
                         }
-                        return emsg
+                        return ret
                     }
                 }]
             }))
         }
 
         return wrapper(this._routes())
+    }
+
+    onRequestDone(msg: RequestMsg) {
+        this.logger.debug('onRequestCommitted', msg)
+        this.height++
+        this.checkpoint()
+    }
+
+    checkpoint() {
+        if (this.height % this.systemConfig.params.k !== 0) {
+            return
+        }
+
+        const logger = this.logger.derived('checkpoint')
+
+        const lastCommitted = this.logs.last(x => x.type === 'committed') as Optional<CommittedLogMsg>
+        if (!lastCommitted) {
+            logger.error('no last commit found but checkpoint triggered. if you see this message, it\'s a bug')
+            return
+        }
+
+        // create checkpoint message
+        const checkpointMsg: CheckpointMsg = {
+            type: 'checkpoint',
+            sequence: lastCommitted.sequence,
+            digest: this.automata.digest(), // digest of the state machine
+            node: this.name,
+        }
+
+        // boardcast checkpoint message
+        this.logBoardcast(this.boardcast(checkpointMsg))
+    }
+
+    logBoardcast(promise: Promise<Message[]>) {
+        promise.then((rets) => {
+            this.logger.debug('boardcasted', rets)
+        }).catch((error) => {
+            this.logger.error('boardcast error', error)
+        })
     }
 
     _routes(): Routes {
@@ -177,45 +211,45 @@ export class Node<TStatus> {
                 return ret
             },
         }
-
-        const bftRoutes: Routes = {
+        let signal: Optional<PromiseHandler<void>> = undefined
+        const consensusRoutes: Routes = {
             'request': async (msg: RequestMsg): Promise<Message> => {
                 const release = await this.mutex.acquire()
                 try {
-                    const logger = this.logger.derived('request')
+                    const logger = this.logger.derived('routes/request')
+                    requires(this.master.name === this.name, ErrorCode.NotMaster)
+                    requires(this.status === NodeStatus.Idle, ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.Idle}`)
+                    requires(this.seqValid(this.seq.peek()), ErrorCode.InvalidSequence)
 
-                    if (this.master.name !== this.name) {
-                        throw new ErrorWithCode(ErrorCode.NotMaster)
-                    }
+                    signal = createPromiseHandler<void>()
 
-                    this.requesting = {
-                        msg: msg,
-                        ...createPromiseHandler<void>('handle user request timeout'),
-                    }
                     const n = this.seq.next()
                     const prePrepareMsg: PrePrepareMsg = {
                         type: 'pre-prepare',
                         view: this.view,
                         sequence: n,
-                        digest: await createMsgDigest(msg),
+                        digest: digestMsg(msg),
                         request: msg,
                     }
-                    logger.debug('boardcast', (prePrepareMsg))
-                    this.boardcast(prePrepareMsg).then((ret) => {
-                        logger.debug('boardcast ret', ret)
-                    }).catch((err) => {
-                        logger.error('boardcast err', err)
-                    })
+                    this.logBoardcast(this.boardcast(prePrepareMsg))
 
                     // now await for pre-prepare, prepare and commit
-                    await this.requesting.promise
-                    this.requesting = undefined
+                    await signal.promise
+                    signal = undefined
+
+                    requires(this.logs.last(
+                        x => x.type === 'committed'
+                            && x.digest === prePrepareMsg.digest
+                            && x.view == this.view
+                            && x.sequence === n
+                    ) !== undefined, ErrorCode.InternalError, 'no commit message found for request')
+
                     logger.debug('requesting reset')
-                    assert.equal(this.requesting, undefined)
+
+                    assert.equal(signal, undefined)
                     assert.equal(this.status, NodeStatus.Idle)
-                    return {
-                        type: 'ok'
-                    }
+                    this.onRequestDone(msg)
+                    return createOkMsg()
                 } finally {
                     release()
                 }
@@ -223,50 +257,38 @@ export class Node<TStatus> {
 
             // a pre-prepare should be sent by master and receive only once
             'pre-prepare': async (msg: PrePrepareMsg) => {
-                const logger = this.logger.derived('pre-prepare')
+                // alter status
+                requires(this.status === NodeStatus.Idle, ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.Idle}`)
 
-                if (!this.isValidSeq(msg.sequence)) {
-                    throw new ErrorWithCode(ErrorCode.InvalidSequence)
-                }
+                requires(this.seqValid(msg.sequence), ErrorCode.InvalidSequence)
+                requires(msg.view === this.view, ErrorCode.InvalidView)
 
-                if (msg.view !== this.view) {
-                    throw new ErrorWithCode(ErrorCode.InvalidView)
-                }
-
-                const digest = await createMsgDigest(msg.request)
-                if (digest !== msg.digest) {
-                    throw new ErrorWithCode(ErrorCode.InvalidDigest)
-                }
-
-                if (this.logs.find(x => deepEquals(x, msg))) {
-                    throw new ErrorWithCode(ErrorCode.DuplicatedMsg)
-                }
+                const digest = digestMsg(msg.request)
+                requires(digest === msg.digest, ErrorCode.InvalidDigest)
+                requires(!this.logs.exists(msg), ErrorCode.DuplicatedMsg)
 
                 // if msg already prepared or committed, then return ok
-                if (this.logs.find(
-                    x => x.digest === msg.digest
+                if (this.logs.last(
+                    x => x.type === 'commit'
+                        && x.digest === msg.digest
                         && x.view == this.view
                         && x.sequence === msg.sequence
-                        && x.type === 'commit')) {
+                )) {
                     return createOkMsg('already committed, no need to pre-prepare')
                 }
 
-                if (this.logs.find(
-                    x => x.digest === msg.digest
+                if (this.logs.last(
+                    x => x.type === 'prepare'
+                        && x.digest === msg.digest
                         && x.view == this.view
                         && x.sequence === msg.sequence
-                        && x.type === 'prepare')) {
+                )) {
                     return createOkMsg('already prepared, no need to pre-prepare')
                 }
-
-                // alter status
-                if (this.status !== NodeStatus.Idle) {
-                    throw new ErrorWithCode(ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.Idle}`)
-                }
+                this.logs.append(msg)
 
                 // mutate state
                 this.status = NodeStatus.PrePrepared
-                this.logs.push(msg)
 
                 // create and boardcast prepare message
                 const prepareMsg: PrepareMsg = {
@@ -277,108 +299,54 @@ export class Node<TStatus> {
                     node: this.name,
                 }
 
-                this.preparing = {
-                    digest: msg.digest,
-                    msg: prepareMsg,
-                    count: 0,
-                    // ...createPromiseHandler<void>('prepare timeout'),
-                }
-                logger.debug('boardcast', (prepareMsg))
-                this.boardcast(prepareMsg).then((ret) => {
-                    logger.debug('boardcast ret', ret)
-                }).catch((err) => {
-                    logger.error('boardcast err', err)
-                })
+                this.logBoardcast(this.boardcast(prepareMsg))
 
-                return {
-                    message: 'prepare boardcasted'
-                }
+                return createOkMsg('prepare boardcasted')
             },
             // prepare messages are sent by all pre-prepared nodes and will be received many times
             // when a PrepareMsg is received, the tx may have been prepared, and even committed locally (or not)
             'prepare': async (msg: PrepareMsg) => {
-                const logger = this.logger.derived('prepare')
-
-                if (!this.isValidSeq(msg.sequence)) {
-                    throw new ErrorWithCode(ErrorCode.InvalidSequence)
-                }
+                const logger = this.logger.derived('routes/prepare')
+                requires(this.seqValid(msg.sequence), ErrorCode.InvalidSequence)
 
                 // msg should be pre-prepared
-                const log = this.logs.find(
+                const prePrepareLog = this.logs.last(
                     x => x.type === 'pre-prepare'
                         && x.digest === msg.digest
                         && x.view == this.view
-                        && x.sequence === this.seq.peek()
+                        && x.sequence === msg.sequence
                 )
-                if (!log) {
-                    throw new ErrorWithCode(ErrorCode.InvalidStatus, 'no pre-prepare message found for msg')
-                }
-
-                if (this.logs.find(x => deepEquals(x, msg))) {
-                    throw new ErrorWithCode(ErrorCode.DuplicatedMsg, 'duplicated prepare message')
-                }
-
-                if (this.logs.find(
-                    x => x.type === 'commit'
-                        && x.digest === msg.digest
-                        && x.view == this.view
-                        && x.sequence === this.seq.peek()
-                )) {
-                    return createOkMsg('current prepare is not required, because other nodes have already entered commit phase')
-                }
+                requires(prePrepareLog !== undefined, ErrorCode.InvalidStatus, 'no pre-prepare message found for msg')
+                requires(!this.logs.exists(msg), ErrorCode.DuplicatedMsg, 'duplicated prepare message')
 
                 // status validation
-                {
-                    if (!this.findRequestInLog(msg.digest)) {
-                        throw new ErrorWithCode(ErrorCode.InvalidStatus, 'no current request')
-                    }
-                    if (!this.preparing) {
-                        return createOkMsg('no preparing request')
-                    }
-                }
+                requires(this.getRequest(msg.digest) !== undefined, ErrorCode.InvalidStatus, 'no current request')
                 //  msg validation
-                {
-                    if (msg.view !== this.view) {
-                        throw new ErrorWithCode(ErrorCode.InvalidView, `msg.view is ${msg.view}, expect ${this.view}`)
-                    }
+                requires(msg.view === this.view, ErrorCode.InvalidView, `msg.view is ${msg.view}, expect ${this.view}`)
+                this.logs.append(msg)
 
-                    if (msg.digest !== this.preparing.digest) {
-                        throw new ErrorWithCode(ErrorCode.InvalidDigest)
-                    }
-                }
-
-                if (this.logs.find(x => deepEquals(x, msg))) {
-                    return createOkMsg('already prepared')
-                }
-
-                if (!this.preparing) {
-                    return createOkMsg(`not preparing, status is ${this.status}`)
-                }
-
-                if (this.preparing.count > 2 * this.systemConfig.params.f) {
-                    throw new ErrorWithCode(ErrorCode.InternalError, 'invalid internal state, this.preparing should be undefined')
-                } else {
-                    if (this.status !== NodeStatus.PrePrepared) {
-                        throw new ErrorWithCode(ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.PrePrepared}`)
-                    }
-                }
-
-                // mutate state
-                this.logs.push(msg)
-                this.preparing.count++
-                logger.debug('count', this.preparing.count)
-                if (this.preparing.count <= 2 * this.systemConfig.params.f) {
-                    return {
-                        message: 'preparing'
-                    }
-                }
-
-                if (this.logs.find(
-                    x => x.type === 'prepared'
+                const count = this.logs.count(
+                    x => x.type === 'prepare'
                         && x.digest === msg.digest
                         && x.view == this.view
-                        && x.sequence === this.seq.peek()
+                        && x.sequence === msg.sequence
+                )
+                if (count <= 2 * this.systemConfig.params.f) {
+                    requires(this.status === NodeStatus.PrePrepared, ErrorCode.InternalError, `status is ${this.status}, should be ${NodeStatus.PrePrepared}`)
+                }
+
+
+                logger.debug('count', count)
+                if (count <= 2 * this.systemConfig.params.f) {
+                    return createOkMsg('pre-preparing')
+                }
+
+                if (this.logs.first(
+                    x => x.type === 'prepared'
                         && x.node === this.name
+                        && x.digest === msg.digest
+                        && x.view == this.view
+                        && x.sequence === msg.sequence
                 )) {
                     return createOkMsg('already prepared due to more than 2f prepare messages')
                 }
@@ -390,13 +358,11 @@ export class Node<TStatus> {
                     digest: msg.digest,
                     node: this.name,
                 }
-                this.logs.push(confirm)
+                this.logs.append(confirm)
 
                 logger.debug('preparing count enough, prepared')
                 // this.preparing.prepared = true
                 this.status = NodeStatus.Prepared
-                this.preparing = undefined
-
 
                 // create and boardcast commit message
                 const commitMsg: CommitMsg = {
@@ -405,12 +371,6 @@ export class Node<TStatus> {
                     sequence: msg.sequence,
                     digest: msg.digest,
                     node: this.name,
-                }
-
-                this.commiting = {
-                    digest: msg.digest,
-                    msg: commitMsg,
-                    count: 0,
                 }
 
                 const ret = await this.boardcast(commitMsg)
@@ -422,87 +382,58 @@ export class Node<TStatus> {
             // commit messages are sent by all prepared nodes and will be received many times
             // when a CommitMsg is received, the tx may have been committed locally or not
             'commit': async (msg: CommitMsg) => {
-                const logger = this.logger.derived('commit')
-
-                if (!this.isValidSeq(msg.sequence)) {
-                    throw new ErrorWithCode(ErrorCode.InvalidSequence)
-                }
-
+                const logger = this.logger.derived('routes/commit')
+                requires(this.seqValid(msg.sequence), ErrorCode.InvalidSequence)
                 // prevent duplicated commit
-                if (this.logs.find(x => deepEquals(x, msg))) {
-                    throw new ErrorWithCode(ErrorCode.DuplicatedMsg, 'duplicated commit message')
-                }
+                requires(!this.logs.exists(msg), ErrorCode.DuplicatedMsg, 'duplicated commit message')
 
-                if (this.logs.find(
+                if (this.logs.first(
                     x => x.type === 'committed'
                         && x.digest === msg.digest
                         && x.view == this.view
-                        && x.sequence === this.seq.peek()
+                        && x.sequence === msg.sequence
                         && x.node === this.name
                 )) {
                     return createOkMsg('already committed due to more than 2f commit messages')
-                }
-
-                // may have been committed due to enough commit messages, in this case, we'll 
-                if (this.status == NodeStatus.Idle) {
-                    // if idle, then it must be committed, but we checked it before, so it's an error
-                    throw new ErrorWithCode(ErrorCode.InvalidStatus, 'idle and not committed')
-                }
-
-                // committed-local checking
-                if (!this.commiting) {
-                    // if not commiting, then it must be committed, but we checked it before, so it's an error
-                    throw new ErrorWithCode(ErrorCode.InvalidStatus, 'not commiting and not committed')
-                }
-
-                if (this.status !== NodeStatus.Prepared) {
-                    throw new ErrorWithCode(ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.Prepared}`)
-                }
-
-                if (msg.view !== this.view) {
-                    throw new ErrorWithCode(ErrorCode.InvalidView)
-                }
-
-                if (this.commiting?.digest !== msg.digest) {
-                    throw new ErrorWithCode(ErrorCode.InvalidDigest)
-                }
-                if (this.commiting.count === 0) {
-                    assert.equal(this.status, NodeStatus.Prepared)
-                }
-
-                if (this.commiting.count > 2 * this.systemConfig.params.f) {
-                    throw new ErrorWithCode(ErrorCode.InternalError, 'invalid internal state, this.commiting should be undefined')
+                } else {
+                    requires(this.status !== NodeStatus.Idle, ErrorCode.InternalError, 'idle and not committed')
                 }
 
                 // a pre-prepare should exists in logs
-                const prePrepareMsg = this.logs.find(
+                const log = this.logs.first(
                     x => x.type === 'pre-prepare'
                         && x.sequence === msg.sequence
                         && x.digest === msg.digest
                 ) as Optional<PrePrepareMsg>
 
-                if (!prePrepareMsg) {
+                if (!log) {
                     throw new ErrorWithCode(ErrorCode.InvalidStatus, 'no related pre-prepare message found for commit message')
                 }
 
-                // mutate state
-                this.logs.push(msg)
-                this.commiting.count++
-                logger.debug('count', this.commiting.count)
-                if (this.commiting.count <= 2 * this.systemConfig.params.f) {
-                    return {
-                        message: 'commiting'
-                    }
+                requires(this.status === NodeStatus.Prepared, ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.Prepared}`)
+                requires(msg.view === this.view, ErrorCode.InvalidView)
+                this.logs.append(msg)
+
+                const count = this.logs.count(
+                    x => x.type === 'commit'
+                        && x.digest === msg.digest
+                        && x.view == this.view
+                        && x.sequence === msg.sequence
+                )
+
+                if (count <= 2 * this.systemConfig.params.f) {
+                    return createOkMsg('preparing')
                 }
-                logger.debug('commiting count enough')
-                const request = this.findRequestInLog(msg.digest)
+
+                logger.debug('collected enough commit messages')
+                // mutate state
+                const request = this.getRequest(msg.digest)
                 if (!request) {
-                    throw new ErrorWithCode(ErrorCode.InternalError, 'no related pre-prepare message found for commit message')
+                    throw new ErrorWithCode(ErrorCode.InternalError, 'a related request should exists')
                 }
 
                 logger.debug('commiting')
                 await this.automata.transfer(request.payload)
-                logger.debug('commiting reset')
 
                 const confirm: CommittedLogMsg = {
                     type: 'committed',
@@ -511,13 +442,12 @@ export class Node<TStatus> {
                     digest: msg.digest,
                     node: this.name,
                 }
-                this.logs.push(confirm)
-                this.commiting = undefined
-                if (this.master.name === this.name) {
-                    assert(this.requesting !== undefined)
-                    logger.debug('requesting resolving')
-                    this.requesting.resolver()
-                    logger.debug('requesting resolved')
+                this.logs.append(confirm)
+
+                if (this.isMaster()) {
+                    assert(signal !== undefined)
+                    logger.debug('master, signal request done')
+                    signal.resolver()
                 }
                 this.status = NodeStatus.Idle
                 return {
@@ -526,9 +456,56 @@ export class Node<TStatus> {
             }
         }
 
+        const viewChangeRoutes: Routes = {
+            // when a node received 2f+1 checkpoint messages with same seq and digest,
+            // a stable checkpoint is reached, and it can safely discard all logs
+            // of which the seq is less than that of the checkpoint
+            'checkpoint': async (msg: CheckpointMsg) => {
+                const logger = this.logger.derived('routes/checkpoint')
+
+                requires(this.seqValid(msg.sequence), ErrorCode.InvalidSequence)
+                requires(!this.logs.exists(msg), ErrorCode.DuplicatedMsg, 'duplicated checkpoint message from same node')
+
+                this.logs.append(msg)
+
+                const count = this.logs.count(
+                    x => x.type === 'checkpoint' && x.sequence === msg.sequence && x.digest === msg.digest
+                )
+
+                if (count <= 2 * this.systemConfig.params.f) {
+                    return {
+                        type: 'ok',
+                        message: 'checkpoint voted'
+                    }
+                }
+
+                logger.debug('stable checkpoint reached')
+                this.lowWaterMark = msg.sequence
+
+                logger.debug(`clear logs with seq < ${msg.sequence}`)
+                this.logs.clear(x => x.sequence < msg.sequence)
+
+                return {
+                    type: 'ok',
+                    message: 'checkpoint created'
+                }
+            },
+            'view-change': async () => {
+                return {
+                    message: 'ok'
+                }
+            },
+            'new-view': async () => {
+                return {
+                    message: 'ok'
+                }
+            },
+        }
+
         return {
             ...domainRoutes,
-            ...bftRoutes
+            ...consensusRoutes,
+            ...viewChangeRoutes
         }
     }
 
@@ -537,7 +514,7 @@ export class Node<TStatus> {
         return withTimeout(multicast(nodes, payload), timeout, 'boardcast timeout')
     }
 
-    async isValidSeq(seq: number) {
+    seqValid(seq: number) {
         return this.lowWaterMark <= seq && seq <= this.highWaterMark
     }
 }
