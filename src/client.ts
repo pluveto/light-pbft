@@ -34,9 +34,9 @@ export class Client {
     /**
      * boardcast a message to all nodes
      */
-    async boardcast<T extends Message>(payload: T): Promise<Message[]> {
+    async boardcast<T extends Message>(payload: T, timeout: number = Infinity): Promise<Message[]> {
         const nodes = [...this.nodes.values()]
-        return multicast(nodes, payload)
+        return (await withTimeout(multicast(nodes, payload), timeout))
     }
 
     async findMaster() {

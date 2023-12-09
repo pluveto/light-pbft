@@ -91,6 +91,9 @@ export function deepEquals(a: any, b: any) {
 }
 
 export function withTimeout<T>(promise: Promise<T>, timeout: number, message: string | Error = 'timed out'): Promise<T> {
+    if (timeout === Infinity || timeout <= 0) {
+        return promise
+    }
     return new Promise((resolve, reject) => {
         const timeoutHandle = setTimeout(() => {
             if (typeof message === 'string') {
