@@ -1,4 +1,7 @@
+import { KVAutomata } from '../automata'
 import { Client } from '../client'
+import { SystemConfig } from '../config'
+import { NodeStatusMsg, QueryStatusMsg, RequestMsg } from '../message'
 import { serve } from '../serve'
 import { createClusterConfig } from './util'
 
@@ -7,12 +10,13 @@ describe('4 Nodes Cluster where f = 1', () => {
 
     let client: Client
     let servers: Array<Awaited<ReturnType<typeof serve>>>
+    let systemConfig: SystemConfig
 
     beforeEach(async () => {
-        const cfg = await createClusterConfig(4)
-        expect(cfg.params.f).toBe(1)
-        servers = await Promise.all(cfg.nodes.map((node) => serve(node.name, cfg)))
-        client = new Client(cfg.nodes)
+        systemConfig = await createClusterConfig({ size: 4, k: 2 })
+        expect(systemConfig.params.f).toBe(1)
+        servers = await Promise.all(systemConfig.nodes.map((node) => serve(node.name, systemConfig)))
+        client = new Client(systemConfig.nodes)
         client.master = await client.findMaster()
         expect(client.master).toBe(servers[0].node.name)
     })
@@ -46,8 +50,52 @@ describe('4 Nodes Cluster where f = 1', () => {
         })
     })
 
+    it('should be able to handle request', async () => {
+        const ret = await client.send({
+            type: 'request',
+            timestamp: Date.now(),
+            payload: 'key1:value1',
+        })
+        expect(ret).toMatchObject({
+            type: 'ok',
+        })
+
+        const status = await client.send({
+            type: 'query-automata',
+            command: 'key1',
+        })
+
+        expect(status).toMatchObject({
+            type: 'ok',
+            message: 'value1',
+        })
+    })
+
+    it('should have consistent state machine digest on difference nodes', async () => {
+        for (let i = 0; i < 2; i++) {
+            const req: RequestMsg = {
+                type: 'request',
+                timestamp: Date.now(),
+                payload: `key${i}:value${i}`,
+            }
+            const ret = await client.send(req)
+            expect(ret).toMatchObject({
+                type: 'ok',
+            })
+        }
+
+        const query: QueryStatusMsg = {
+            type: 'query-status',
+        }
+        const status = (await client.boardcast(query)) as NodeStatusMsg<ReturnType<KVAutomata['status']>>[]
+        console.log(status)
+        expect(status).toHaveLength(4)
+        const digests = status.map((item) => item.automata.digest)
+        expect([...new Set(digests)]).toHaveLength(1)
+    })
+
     it('should be able to handle a batch of requests one by one', async () => {
-        const numRequest = 10
+        const numRequest = 2
         const tasks = []
         for (let i = 0; i < numRequest; i++) {
             const task = client.send({
@@ -73,5 +121,18 @@ describe('4 Nodes Cluster where f = 1', () => {
                 message: `value${i}`,
             })
         }
+
+        const query: QueryStatusMsg = {
+            type: 'query-status',
+        }
+        const status = (await client.boardcast(query)) as NodeStatusMsg<ReturnType<KVAutomata['status']>>[]
+        console.log(status)
+        expect(status).toHaveLength(4)
+
+        const height = status.map((item) => item.height)
+        expect([...new Set(height)]).toEqual([numRequest])
+
+        const lowWaterMark = status.map((item) => item.lowWaterMark)
+        expect([...new Set(lowWaterMark)]).toEqual([numRequest / systemConfig.params.k - 1])
     })
 })

@@ -46,7 +46,20 @@ export async function createSingleNodeConfig(name: string = 'node'): Promise<Sys
     }
 }
 
-export async function createClusterConfig(size: number = 4): Promise<SystemConfig> {
+type CreateClusterConfigOptions = {
+    size?: number
+    k?: number
+}
+
+const DefaultCreateClusterConfigOptions = {
+    size: 4,
+    k: 30, // size of a checkpoint
+}
+
+export async function createClusterConfig({
+    size = DefaultCreateClusterConfigOptions.size,
+    k = DefaultCreateClusterConfigOptions.k,
+}: CreateClusterConfigOptions): Promise<SystemConfig> {
     const nodes = []
     for (let i = 0; i < size; i++) {
         nodes.push({
@@ -57,7 +70,6 @@ export async function createClusterConfig(size: number = 4): Promise<SystemConfi
         })
     }
     const f = Math.floor((size - 1) / 3)
-    const k = f * 30
     return {
         nodes,
         params: {

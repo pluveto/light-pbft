@@ -1,3 +1,5 @@
+import { ParamConfig } from './config'
+
 export enum ErrorCode {
     NotMaster = 'not-master',
     InvalidType = 'invalid-type',
@@ -44,7 +46,7 @@ export type OkMsg = {
     message?: string
 };
 
-export function createOkMsg(message?: string): OkMsg {
+export function ok(message?: string): OkMsg {
     return {
         type: 'ok',
         message,
@@ -63,6 +65,17 @@ export type MasterInfoMsg = {
     type: 'master-info'
     name: string
 };
+
+export type NodeStatusMsg<TAutomataStatus> = {
+    type: 'node-status'
+    view: number
+    master: string
+    automata: TAutomataStatus
+    params: ParamConfig
+    height: number
+    lowWaterMark: number
+    highWaterMark: number
+}
 
 export type RequestMsg = {
     type: 'request'
@@ -170,6 +183,7 @@ export type Message =
     | MasterInfoMsg
     | QueryStatusMsg
     | QueryAutomataMsg
+    | NodeStatusMsg<unknown>
 
 
 export type MessageType = Message['type'];

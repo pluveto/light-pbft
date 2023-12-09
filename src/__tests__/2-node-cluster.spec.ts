@@ -9,7 +9,7 @@ describe('2 Nodes Cluster where f = 0', () => {
     let servers: Array<Awaited<ReturnType<typeof serve>>>
 
     beforeEach(async () => {
-        const cfg = await createClusterConfig(2)
+        const cfg = await createClusterConfig({ size: 2 })
         expect(cfg.params.f).toBe(0)
         servers = await Promise.all(cfg.nodes.map((node) => serve(node.name, cfg)))
         client = new Client(cfg.nodes)

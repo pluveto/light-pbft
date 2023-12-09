@@ -36,6 +36,8 @@ export function quote(s: string) {
     return `"${s}"`
 }
 
+export type SeqIterator = ReturnType<typeof createSeqIterator>
+
 export function createSeqIterator(max: number = Infinity) {
     let i = 0
     return {
@@ -45,6 +47,9 @@ export function createSeqIterator(max: number = Infinity) {
         },
         peek() {
             return i
+        },
+        reset(val: number = 0) {
+            i = val
         }
     }
 }
@@ -121,7 +126,7 @@ export function digestMsg<T extends Message>(msg: T) {
     return sha256(JSON.stringify(msg))
 }
 
-export function createPromiseHandler<T>(message?: string, timeout: number = 3000) {
+export function createPromiseHandler<T>(timeoutMessage?: string, timeout: number = 3000) {
     let resolver: (value: T | PromiseLike<T>) => void, rejecter: (reason?: Error) => void
     let timeoutHandle: NodeJS.Timeout
     let done = false
@@ -141,7 +146,7 @@ export function createPromiseHandler<T>(message?: string, timeout: number = 3000
         if (timeout > 0) {
             timeoutHandle = setTimeout(() => {
                 if (!done) {
-                    reject(new Error(message ?? 'timeout'))
+                    reject(new Error(timeoutMessage ?? 'timeout'))
                 }
             }, timeout)
         }

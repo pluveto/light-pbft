@@ -10,7 +10,7 @@ type LogEntry = [string, LogMessage]
 export class Logs {
     entries: LogEntry[] = []
     digest: DigestFn
-    logger: Logger
+    logger?: Logger
 
     constructor(logger: Logger, digest: DigestFn) {
         this.logger = logger
@@ -20,7 +20,7 @@ export class Logs {
     async append(msg: LogMessage) {
         const digest = this.digest(msg)
         const entry: LogEntry = [digest, msg]
-        this.logger.debug('appending', entry)
+        this.logger?.debug('appending', entry)
         this.entries.push(entry)
     }
 
@@ -59,6 +59,9 @@ export class Logs {
     }
 
     clear(predicate: (msg: LogMessage) => boolean): void {
+        if (this.logger) {
+            this.logger.debug('clearing logs', this.entries.filter(([, msg]) => predicate(msg)).map(([, msg]) => msg))
+        }
         this.entries = this.entries.filter(([, msg]) => !predicate(msg))
     }
 }

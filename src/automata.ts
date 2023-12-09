@@ -21,7 +21,7 @@ export class KVAutomata implements Automata<ReturnType<KVAutomata['status']>> {
     history: string[] = []
     height: number = 0
     logger: Logger
-    hash = crypto.createHash('sha256')
+    lastDigest: string = ''
     constructor(logger: Logger) {
         this.logger = logger
     }
@@ -33,7 +33,12 @@ export class KVAutomata implements Automata<ReturnType<KVAutomata['status']>> {
         } else {
             this.state.set(key, value)
         }
-        this.hash.update(tx)
+        this.height++
+
+        const hash = crypto.createHash('sha256')
+        hash.update(this.lastDigest + tx)
+        this.lastDigest = hash.digest('hex')
+
         this.history.push(tx)
         this.logger.info('transferred')
     }
@@ -53,11 +58,12 @@ export class KVAutomata implements Automata<ReturnType<KVAutomata['status']>> {
     status() {
         return {
             state: Object.fromEntries(this.state),
+            digest: this.lastDigest,
             history: this.history,
         }
     }
 
     digest(): string {
-        return this.hash.digest('hex')
+        return this.lastDigest
     }
 }

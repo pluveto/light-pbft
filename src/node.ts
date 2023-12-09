@@ -1,7 +1,7 @@
 import jaysom from 'jayson/promise'
 import { Mutex } from 'async-mutex'
 
-import { multicast, createSeqIterator, withTimeout, PromiseHandler, digestMsg, createPromiseHandler } from './util'
+import { multicast, createSeqIterator, withTimeout, PromiseHandler, digestMsg, createPromiseHandler, SeqIterator } from './util'
 import { NodeConfig, SystemConfig } from './config'
 import { Automata } from './automata'
 import { NamedLogger } from './logger'
@@ -17,7 +17,7 @@ import {
     PrepareMsg,
     PreparedLogMsg,
     QueryAutomataMsg,
-    RequestMsg, createErrorMsg, createOkMsg, requires, CheckpointMsg
+    RequestMsg, createErrorMsg, ok, requires, CheckpointMsg, NodeStatusMsg
 } from './message'
 import { Optional } from './types'
 import { Logs } from './logs'
@@ -38,17 +38,21 @@ type RouteHandler<T extends Message> = (msg: T) => Promise<any>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Routes = { [key: string]: RouteHandler<any> };
 
-export class Node<TStatus> {
+export class Node<TAutomataStatus> {
     config: NodeConfig
     logger: NamedLogger
     nodes: Map<string, jaysom.client> = new Map() // name -> client
     view: number = 0
     systemConfig: SystemConfig
-    seq = createSeqIterator()
-    // is equal to the sequence number of the last stable checkpoint.
+    seq: SeqIterator // only for master node
+    /**
+     * The low-water mark is equal to the sequence number of the last stable checkpoint.
+     * The high-water mark H = h + 2 * k, where is big enough so that replicas do 
+     * not stall waiting for a checkpoint to become stable
+     */
     lowWaterMark = 0
     get highWaterMark() {
-        return this.lowWaterMark + this.systemConfig.params.k
+        return this.lowWaterMark + this.systemConfig.params.k * 2
     }
     get lastStableSeq() {
         return this.lowWaterMark
@@ -67,6 +71,23 @@ export class Node<TStatus> {
         ) as Optional<PrePrepareMsg>)?.request
     }
 
+    /**
+     * height is the number of requests committed
+     * 
+     *              <stable-ckpt=1>    <height=2>
+     * |   ckpt 0     |   ckpt 1     |   ckpt 2     |    ckpt 3     | <- checkpoints
+     * |l0|l1|l2|l3|c4|l5|l6|l7|l8|c9|l10|..|l12|c13|l14|nul|nul|nul| <-- logs
+     * ^^^^^^^^^^^^^^^              ^                               ^
+     * GC-able                  lowWaterMark                  highWaterMark
+     * 
+     * - lN means the Nth log, it can be any type of log
+     * - cN means the Nth committed msg log
+     * - l0~c4 has the same sequence number, and they are in the same checkpoint
+     *   and so on for l5~c9, l10~c13...
+     * - any log with seq number less than lowWaterMark, or lastStableSeq can be GC-ed
+     * - height is 2 because c13 is the committed msg with index 2
+     *   height is not 3 because its related request is not committed yet
+     */
     _height = 0
 
     get height() {
@@ -78,7 +99,7 @@ export class Node<TStatus> {
         this.logger.debug('height changed to', h)
     }
 
-    automata: Automata<TStatus>
+    automata: Automata<TAutomataStatus>
 
     get master() {
         return calcMaster(this.view, this.systemConfig.nodes)
@@ -101,8 +122,9 @@ export class Node<TStatus> {
         this.logger.debug('status switched to', s)
     }
 
-    constructor(meta: NodeConfig, config: SystemConfig, automata: Automata<TStatus>) {
+    constructor(meta: NodeConfig, config: SystemConfig, automata: Automata<TAutomataStatus>) {
         this.logger = new NamedLogger(meta.name)
+        this.seq = createSeqIterator()
         this.logs = new Logs(this.logger.derived('log'), digestMsg)
         this.config = meta
         this.systemConfig = config
@@ -147,8 +169,8 @@ export class Node<TStatus> {
         return wrapper(this._routes())
     }
 
-    onRequestDone(msg: RequestMsg) {
-        this.logger.debug('onRequestCommitted', msg)
+    onCommitted(msg: CommittedLogMsg) {
+        this.logger.debug('onCommitted', msg)
         this.height++
         this.checkpoint()
     }
@@ -175,10 +197,10 @@ export class Node<TStatus> {
         }
 
         // boardcast checkpoint message
-        this.logBoardcast(this.boardcast(checkpointMsg))
+        this.traceBoardcast(this.boardcast(checkpointMsg))
     }
 
-    logBoardcast(promise: Promise<Message[]>) {
+    traceBoardcast(promise: Promise<Message[]>) {
         promise.then((rets) => {
             this.logger.debug('boardcasted', rets)
         }).catch((error) => {
@@ -189,13 +211,17 @@ export class Node<TStatus> {
     _routes(): Routes {
         const domainRoutes: Routes = {
             'query-status': async () => {
-                return {
-                    status: 'ok',
+                const msg: NodeStatusMsg<TAutomataStatus> = {
+                    type: 'node-status',
                     view: this.view,
                     master: this.master.name,
                     automata: this.automata.status(),
                     params: this.systemConfig.params,
+                    height: this.height,
+                    lowWaterMark: this.lowWaterMark,
+                    highWaterMark: this.highWaterMark,
                 }
+                return msg
             },
             'query-automata': async ({ command }: QueryAutomataMsg) => {
                 return {
@@ -221,7 +247,8 @@ export class Node<TStatus> {
                     requires(this.status === NodeStatus.Idle, ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.Idle}`)
                     requires(this.seqValid(this.seq.peek()), ErrorCode.InvalidSequence)
 
-                    signal = createPromiseHandler<void>()
+                    // TODO: recover from failure?
+                    signal = createPromiseHandler<void>('request timeout', 10 * 1000)
 
                     const n = this.seq.next()
                     const prePrepareMsg: PrePrepareMsg = {
@@ -231,7 +258,7 @@ export class Node<TStatus> {
                         digest: digestMsg(msg),
                         request: msg,
                     }
-                    this.logBoardcast(this.boardcast(prePrepareMsg))
+                    this.traceBoardcast(this.boardcast(prePrepareMsg))
 
                     // now await for pre-prepare, prepare and commit
                     await signal.promise
@@ -248,8 +275,7 @@ export class Node<TStatus> {
 
                     assert.equal(signal, undefined)
                     assert.equal(this.status, NodeStatus.Idle)
-                    this.onRequestDone(msg)
-                    return createOkMsg()
+                    return ok()
                 } finally {
                     release()
                 }
@@ -274,7 +300,7 @@ export class Node<TStatus> {
                         && x.view == this.view
                         && x.sequence === msg.sequence
                 )) {
-                    return createOkMsg('already committed, no need to pre-prepare')
+                    return ok('already committed, no need to pre-prepare')
                 }
 
                 if (this.logs.last(
@@ -283,7 +309,7 @@ export class Node<TStatus> {
                         && x.view == this.view
                         && x.sequence === msg.sequence
                 )) {
-                    return createOkMsg('already prepared, no need to pre-prepare')
+                    return ok('already prepared, no need to pre-prepare')
                 }
                 this.logs.append(msg)
 
@@ -299,9 +325,9 @@ export class Node<TStatus> {
                     node: this.name,
                 }
 
-                this.logBoardcast(this.boardcast(prepareMsg))
+                this.traceBoardcast(this.boardcast(prepareMsg))
 
-                return createOkMsg('prepare boardcasted')
+                return ok('prepare boardcasted')
             },
             // prepare messages are sent by all pre-prepared nodes and will be received many times
             // when a PrepareMsg is received, the tx may have been prepared, and even committed locally (or not)
@@ -338,7 +364,7 @@ export class Node<TStatus> {
 
                 logger.debug('count', count)
                 if (count <= 2 * this.systemConfig.params.f) {
-                    return createOkMsg('pre-preparing')
+                    return ok('preparing')
                 }
 
                 if (this.logs.first(
@@ -348,7 +374,7 @@ export class Node<TStatus> {
                         && x.view == this.view
                         && x.sequence === msg.sequence
                 )) {
-                    return createOkMsg('already prepared due to more than 2f prepare messages')
+                    return ok('already prepared due to more than 2f prepare messages')
                 }
 
                 const confirm: PreparedLogMsg = {
@@ -394,7 +420,7 @@ export class Node<TStatus> {
                         && x.sequence === msg.sequence
                         && x.node === this.name
                 )) {
-                    return createOkMsg('already committed due to more than 2f commit messages')
+                    return ok('already committed due to more than 2f commit messages')
                 } else {
                     requires(this.status !== NodeStatus.Idle, ErrorCode.InternalError, 'idle and not committed')
                 }
@@ -422,7 +448,7 @@ export class Node<TStatus> {
                 )
 
                 if (count <= 2 * this.systemConfig.params.f) {
-                    return createOkMsg('preparing')
+                    return ok('committing')
                 }
 
                 logger.debug('collected enough commit messages')
@@ -450,6 +476,8 @@ export class Node<TStatus> {
                     signal.resolver()
                 }
                 this.status = NodeStatus.Idle
+
+                this.onCommitted(confirm)
                 return {
                     message: 'committed'
                 }
@@ -459,24 +487,24 @@ export class Node<TStatus> {
         const viewChangeRoutes: Routes = {
             // when a node received 2f+1 checkpoint messages with same seq and digest,
             // a stable checkpoint is reached, and it can safely discard all logs
-            // of which the seq is less than that of the checkpoint
+            // of which the seq is less than that of the stable checkpoint
             'checkpoint': async (msg: CheckpointMsg) => {
                 const logger = this.logger.derived('routes/checkpoint')
 
                 requires(this.seqValid(msg.sequence), ErrorCode.InvalidSequence)
                 requires(!this.logs.exists(msg), ErrorCode.DuplicatedMsg, 'duplicated checkpoint message from same node')
 
+                // the checkpoint messages are important
+                // once 2f+1 ckpt msg is collected, we get a state validity proof
                 this.logs.append(msg)
 
                 const count = this.logs.count(
                     x => x.type === 'checkpoint' && x.sequence === msg.sequence && x.digest === msg.digest
                 )
 
+                logger.debug('count', count)
                 if (count <= 2 * this.systemConfig.params.f) {
-                    return {
-                        type: 'ok',
-                        message: 'checkpoint voted'
-                    }
+                    return ok('checkpointing')
                 }
 
                 logger.debug('stable checkpoint reached')
@@ -485,10 +513,7 @@ export class Node<TStatus> {
                 logger.debug(`clear logs with seq < ${msg.sequence}`)
                 this.logs.clear(x => x.sequence < msg.sequence)
 
-                return {
-                    type: 'ok',
-                    message: 'checkpoint created'
-                }
+                return ok('checkpoint created')
             },
             'view-change': async () => {
                 return {
