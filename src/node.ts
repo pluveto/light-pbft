@@ -1,5 +1,12 @@
 import jaysom from 'jayson/promise'
 import { Mutex } from 'async-mutex'
+import assert from 'assert'
+
+import { NodeConfig, SystemConfig } from './config'
+import { Automata } from './automata'
+import { NamedLogger } from './logger'
+import { Optional } from './types'
+import { Logs } from './logs'
 
 import {
     multicast,
@@ -10,10 +17,7 @@ import {
     createPromiseHandler,
     SeqIterator
 } from './util'
-import { NodeConfig, SystemConfig } from './config'
-import { Automata } from './automata'
-import { NamedLogger } from './logger'
-import assert from 'assert'
+
 import {
     CommitMsg,
     CommittedLogMsg,
@@ -27,8 +31,6 @@ import {
     QueryAutomataMsg,
     RequestMsg, createErrorMsg, ok, requires, CheckpointMsg, NodeStatusMsg
 } from './message'
-import { Optional } from './types'
-import { Logs } from './logs'
 
 function calcMaster(view: number, nodes: NodeConfig[]) {
     const masterIndex = view % nodes.length
