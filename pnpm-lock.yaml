@@ -17,6 +17,9 @@ dependencies:
   jayson:
     specifier: ^4.1.0
     version: 4.1.0
+  jsonschema:
+    specifier: ^1.4.1
+    version: 1.4.1
   ws:
     specifier: ^8.14.2
     version: 8.14.2
@@ -2498,6 +2501,10 @@ packages:
   /jsonparse@1.3.1:
     resolution: {integrity: sha512-POQXvpdL69+CluYsillJ7SUhKvytYjW9vG/GKpnf+xP8UWgYEM/RaMzHHofbALDiKbbP1W8UEYmgGl39WkPZsg==}
     engines: {'0': node >= 0.2.0}
+    dev: false
+
+  /jsonschema@1.4.1:
+    resolution: {integrity: sha512-S6cATIPVv1z0IlxdN+zUk5EPjkGCdnhN4wVSBlvoUO1tOLJootbo9CquNJmbIh4yikWHiUedhRYrNPn1arpEmQ==}
     dev: false
 
   /keyv@4.5.4:
