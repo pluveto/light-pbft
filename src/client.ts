@@ -7,16 +7,6 @@ import { Optional } from './types'
 
 
 export class Client {
-    /**
-     * send a message to master node
-     */
-    async send<T extends Message>(msg: T, timeout: number = 3000): Promise<Message> {
-        if (!this.master) {
-            throw new Error('master not set')
-        }
-        const sendPromise = this.nodes.get(this.master)!.request(msg.type, msg)
-        return (await withTimeout(sendPromise, timeout)).result
-    }
     private nodes: Map<string, jaysom.client> = new Map()
     master?: string
 
@@ -29,6 +19,18 @@ export class Client {
             this.nodes.set(node.name, client)
         })
     }
+
+    /**
+     * send a message to master node
+     */
+    async send<T extends Message>(msg: T, timeout: number = 3000): Promise<Message> {
+        if (!this.master) {
+            throw new Error('master not set')
+        }
+        const sendPromise = this.nodes.get(this.master)!.request(msg.type, msg)
+        return (await withTimeout(sendPromise, timeout)).result
+    }
+
     /**
      * boardcast a message to all nodes
      */
