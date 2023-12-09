@@ -460,8 +460,18 @@ export class Node<TAutomataStatus> {
                 if (!log) {
                     throw new ErrorWithCode(ErrorCode.InvalidStatus, 'no related pre-prepare message found for commit message')
                 }
+                // edge case: the current node has received a pre-prepare message and is in the pre-prepared state.
+                // however, other nodes have already switched to the prepared state and started broadcasting commit messages,
+                // so the current node will directly receive commit messages in its pre-prepared state.
+                // 
+                // to handle this, we ignore the invalid status situation and just append the commit message to logs.
+                // and when the 2f+1 commit messages are collected, the commit action will finally be executed.
+                if (this.status !== NodeStatus.Prepared) {
+                    logger.warn(
+                        `interesting, current node is lagged. status is ${this.status}, expect ${NodeStatus.Prepared}.`
+                        + 'but we will still append the commit message to logs')
+                }
 
-                requires(this.status === NodeStatus.Prepared, ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.Prepared}`)
                 requires(msg.view === this.view, ErrorCode.InvalidView)
                 this.logs.append(msg)
 
