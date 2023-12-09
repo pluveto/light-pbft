@@ -84,7 +84,6 @@ export class Node<TStatus> {
     view: number = 0
     systemConfig: SystemConfig
     seq = createSeqIterator()
-    _status: NodeStatus = NodeStatus.Idle
     // logs are all the VALID messages received.
     // periodicaly cleaned.
     logs: (PrePrepareMsg | PrepareMsg | CommitMsg | PreparedLogMsg | CommittedLogMsg)[] = []
@@ -130,7 +129,7 @@ export class Node<TStatus> {
         return this.config.name
     }
 
-
+    _status: NodeStatus = NodeStatus.Idle
     get status() {
         return this._status
     }
@@ -217,6 +216,10 @@ export class Node<TStatus> {
         const bftRoutes: Routes = {
             'request': async (msg: RequestMsg): Promise<Message> => {
                 const logger = this.logger.derived('request')
+
+                if (this.master.name !== this.name) {
+                    throw new ErrorWithCode(ErrorCode.NotMaster)
+                }
 
                 while (this.mutex) {
                     logger.debug('request mutex waiting')
@@ -316,8 +319,11 @@ export class Node<TStatus> {
                     // ...createPromiseHandler<void>('prepare timeout'),
                 }
                 logger.debug('boardcast', (prepareMsg))
-                const ret = await this.boardcast(prepareMsg)
-                logger.debug('ret', ret)
+                this.boardcast(prepareMsg).then((ret) => {
+                    logger.debug('boardcast ret', ret)
+                }).catch((err) => {
+                    logger.error('boardcast err', err)
+                })
 
                 return {
                     message: 'prepare boardcasted'
