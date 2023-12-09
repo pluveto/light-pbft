@@ -8,6 +8,9 @@ export type SystemConfig = {
 export type ParamConfig = {
     // f is the max number of faulty nodes tolerated
     f: number
+    // k is a big number that is used to calculate the high-water mark
+    // if checkpoint is genereated at every 100 requests, then k can be 200
+    k?: number
 }
 
 export type NodeConfig = {

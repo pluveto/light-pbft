@@ -45,7 +45,11 @@ export class Node<TStatus> {
     view: number = 0
     systemConfig: SystemConfig
     seq = createSeqIterator()
-
+    // is equal to the sequence number of the last stable checkpoint.
+    lowWaterMark = 0
+    get highWaterMark() {
+        return this.lowWaterMark + (this.systemConfig.params.k ?? 1000)
+    }
     // logs are all the VALID messages received.
     // periodicaly cleaned.
     logs: (PrePrepareMsg | PrepareMsg | CommitMsg | PreparedLogMsg | CommittedLogMsg)[] = []
@@ -220,20 +224,22 @@ export class Node<TStatus> {
             // a pre-prepare should be sent by master and receive only once
             'pre-prepare': async (msg: PrePrepareMsg) => {
                 const logger = this.logger.derived('pre-prepare')
-                // msg basic validation
-                {
-                    if (msg.view !== this.view) {
-                        throw new ErrorWithCode(ErrorCode.InvalidView)
-                    }
 
-                    const digest = await createMsgDigest(msg.request)
-                    if (digest !== msg.digest) {
-                        throw new ErrorWithCode(ErrorCode.InvalidDigest)
-                    }
+                if (!this.isValidSeq(msg.sequence)) {
+                    throw new ErrorWithCode(ErrorCode.InvalidSequence)
+                }
 
-                    if (this.logs.find(x => deepEquals(x, msg))) {
-                        throw new ErrorWithCode(ErrorCode.DuplicatedMsg)
-                    }
+                if (msg.view !== this.view) {
+                    throw new ErrorWithCode(ErrorCode.InvalidView)
+                }
+
+                const digest = await createMsgDigest(msg.request)
+                if (digest !== msg.digest) {
+                    throw new ErrorWithCode(ErrorCode.InvalidDigest)
+                }
+
+                if (this.logs.find(x => deepEquals(x, msg))) {
+                    throw new ErrorWithCode(ErrorCode.DuplicatedMsg)
                 }
 
                 // if msg already prepared or committed, then return ok
@@ -292,6 +298,11 @@ export class Node<TStatus> {
             // when a PrepareMsg is received, the tx may have been prepared, and even committed locally (or not)
             'prepare': async (msg: PrepareMsg) => {
                 const logger = this.logger.derived('prepare')
+
+                if (!this.isValidSeq(msg.sequence)) {
+                    throw new ErrorWithCode(ErrorCode.InvalidSequence)
+                }
+
                 // msg should be pre-prepared
                 const log = this.logs.find(
                     x => x.type === 'pre-prepare'
@@ -307,13 +318,13 @@ export class Node<TStatus> {
                     throw new ErrorWithCode(ErrorCode.DuplicatedMsg, 'duplicated prepare message')
                 }
 
-                // msg may have been committed
                 if (this.logs.find(
-                    x => x.digest === msg.digest
+                    x => x.type === 'commit'
+                        && x.digest === msg.digest
                         && x.view == this.view
                         && x.sequence === this.seq.peek()
-                        && x.type === 'commit')) {
-                    return createOkMsg('already committed')
+                )) {
+                    return createOkMsg('current prepare is not required, because other nodes have already entered commit phase')
                 }
 
                 // status validation
@@ -413,6 +424,10 @@ export class Node<TStatus> {
             'commit': async (msg: CommitMsg) => {
                 const logger = this.logger.derived('commit')
 
+                if (!this.isValidSeq(msg.sequence)) {
+                    throw new ErrorWithCode(ErrorCode.InvalidSequence)
+                }
+
                 // prevent duplicated commit
                 if (this.logs.find(x => deepEquals(x, msg))) {
                     throw new ErrorWithCode(ErrorCode.DuplicatedMsg, 'duplicated commit message')
@@ -444,17 +459,10 @@ export class Node<TStatus> {
                     throw new ErrorWithCode(ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.Prepared}`)
                 }
 
-                // 1. validate signatures of m and commit msg
-                // 2. validate view
                 if (msg.view !== this.view) {
                     throw new ErrorWithCode(ErrorCode.InvalidView)
                 }
-                // 3. validate sequence
-                if (!this.isValidSeq(msg.sequence)) {
-                    throw new ErrorWithCode(ErrorCode.InvalidSequence,)
-                }
 
-                // 4. validate digest
                 if (this.commiting?.digest !== msg.digest) {
                     throw new ErrorWithCode(ErrorCode.InvalidDigest)
                 }
@@ -530,6 +538,6 @@ export class Node<TStatus> {
     }
 
     async isValidSeq(seq: number) {
-        return 0 < seq && seq <= this.seq.peek()
+        return this.lowWaterMark <= seq && seq <= this.highWaterMark
     }
 }
