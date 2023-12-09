@@ -44,7 +44,13 @@ export class Node<TAutomataStatus> {
     nodes: Map<string, jaysom.client> = new Map() // name -> client
     view: number = 0
     systemConfig: SystemConfig
-    seq: SeqIterator // only for master node
+    _seq: SeqIterator // only for master node
+    get seq() {
+        if (!this.isMaster()) {
+            throw new Error('only master node has seq iterator')
+        }
+        return this._seq
+    }
     /**
      * The low-water mark is equal to the sequence number of the last stable checkpoint.
      * The high-water mark H = h + 2 * k, where is big enough so that replicas do 
@@ -63,10 +69,10 @@ export class Node<TAutomataStatus> {
 
     mutex = new Mutex()
 
-    getRequest(digest: string) {
+    getRequest(digest: string, sequence: number) {
         return (this.logs.first(
             x => x.type === 'pre-prepare'
-                && x.sequence === this.seq.peek()
+                && x.sequence === sequence
                 && x.digest === digest
         ) as Optional<PrePrepareMsg>)?.request
     }
@@ -123,8 +129,8 @@ export class Node<TAutomataStatus> {
     }
 
     constructor(meta: NodeConfig, config: SystemConfig, automata: Automata<TAutomataStatus>) {
+        this._seq = createSeqIterator()
         this.logger = new NamedLogger(meta.name)
-        this.seq = createSeqIterator()
         this.logs = new Logs(this.logger.derived('log'), digestMsg)
         this.config = meta
         this.systemConfig = config
@@ -346,7 +352,7 @@ export class Node<TAutomataStatus> {
                 requires(!this.logs.exists(msg), ErrorCode.DuplicatedMsg, 'duplicated prepare message')
 
                 // status validation
-                requires(this.getRequest(msg.digest) !== undefined, ErrorCode.InvalidStatus, 'no current request')
+                requires(this.getRequest(msg.digest, msg.sequence) !== undefined, ErrorCode.InvalidStatus, 'no current request')
                 //  msg validation
                 requires(msg.view === this.view, ErrorCode.InvalidView, `msg.view is ${msg.view}, expect ${this.view}`)
                 this.logs.append(msg)
@@ -453,7 +459,7 @@ export class Node<TAutomataStatus> {
 
                 logger.debug('collected enough commit messages')
                 // mutate state
-                const request = this.getRequest(msg.digest)
+                const request = this.getRequest(msg.digest, msg.sequence)
                 if (!request) {
                     throw new ErrorWithCode(ErrorCode.InternalError, 'a related request should exists')
                 }

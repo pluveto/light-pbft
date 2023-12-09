@@ -42,7 +42,7 @@ export function createSeqIterator(max: number = Infinity) {
     let i = 0
     return {
         next() {
-            i = i++ % max
+            i = (i + 1) % max
             return i
         },
         peek() {

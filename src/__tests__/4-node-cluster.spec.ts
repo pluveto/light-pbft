@@ -133,6 +133,6 @@ describe('4 Nodes Cluster where f = 1', () => {
         expect([...new Set(height)]).toEqual([numRequest])
 
         const lowWaterMark = status.map((item) => item.lowWaterMark)
-        expect([...new Set(lowWaterMark)]).toEqual([numRequest / systemConfig.params.k - 1])
+        expect([...new Set(lowWaterMark)]).toEqual([numRequest])
     })
 })
