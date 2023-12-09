@@ -308,8 +308,12 @@ export class Node<TAutomataStatus> {
 
             // a pre-prepare should be sent by master and receive only once
             'pre-prepare': async (msg: PrePrepareMsg) => {
-                // alter status
-                requires(this.status === NodeStatus.Idle, ErrorCode.InvalidStatus, `status is ${this.status}, expect ${NodeStatus.Idle}`)
+                // see the comments in routes/commit
+                if (this.status !== NodeStatus.Idle) {
+                    this.logger.warn(
+                        `interesting, current node is lagged. status is ${this.status}, expect ${NodeStatus.Idle}.`
+                        + 'but we will still append the pre-prepare message to logs')
+                }
 
                 requires(this.seqValid(msg.sequence), ErrorCode.InvalidSequence)
                 requires(msg.view === this.view, ErrorCode.InvalidView)
