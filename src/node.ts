@@ -45,6 +45,7 @@ export class Node<TStatus> {
     view: number = 0
     systemConfig: SystemConfig
     seq = createSeqIterator()
+
     // logs are all the VALID messages received.
     // periodicaly cleaned.
     logs: (PrePrepareMsg | PrepareMsg | CommitMsg | PreparedLogMsg | CommittedLogMsg)[] = []
@@ -72,7 +73,6 @@ export class Node<TStatus> {
         msg: PrepareMsg
         count: number
     }
-    // & PromiseHandler<void>
 
     commiting?: {
         digest: string
@@ -293,12 +293,13 @@ export class Node<TStatus> {
             'prepare': async (msg: PrepareMsg) => {
                 const logger = this.logger.derived('prepare')
                 // msg should be pre-prepared
-                const hasAnyPreprepare = this.logs.find(
-                    x => x.digest === msg.digest
+                const log = this.logs.find(
+                    x => x.type === 'pre-prepare'
+                        && x.digest === msg.digest
                         && x.view == this.view
                         && x.sequence === this.seq.peek()
                 )
-                if (!hasAnyPreprepare) {
+                if (!log) {
                     throw new ErrorWithCode(ErrorCode.InvalidStatus, 'no pre-prepare message found for msg')
                 }
 
