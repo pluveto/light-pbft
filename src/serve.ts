@@ -27,10 +27,12 @@ export async function serve(name: string, systemConfig: SystemConfig) {
     if (!config) {
         throw new Error(`node ${name} not found`)
     }
+
     const systemConfigLocal = maskPriKeys(config.name, systemConfig)
     const node = new Node(config, systemConfigLocal, new KVAutomata(new NamedLogger(config.name).derived('automata')))
     const server = new jayson.Server(node.routes())
     const http = server.http()
+
     await new Promise<void>((resolve) => {
         http.listen({
             host: config.host,

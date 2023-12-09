@@ -22,9 +22,11 @@ export class KVAutomata implements Automata<ReturnType<KVAutomata['status']>> {
     height: number = 0
     logger: Logger
     lastDigest: string = ''
+
     constructor(logger: Logger) {
         this.logger = logger
     }
+
     transfer(tx: string) {
         this.logger.info('transferring', tx)
         const [key, value] = this.parse(tx)

@@ -90,6 +90,7 @@ describe('4 Nodes Cluster where f = 1', () => {
         const status = (await client.boardcast(query)) as NodeStatusMsg<ReturnType<KVAutomata['status']>>[]
         console.log(status)
         expect(status).toHaveLength(4)
+
         const digests = status.map((item) => item.automata.digest)
         expect([...new Set(digests)]).toHaveLength(1)
     })
@@ -125,6 +126,7 @@ describe('4 Nodes Cluster where f = 1', () => {
         const query: QueryStatusMsg = {
             type: 'query-status',
         }
+
         const status = (await client.boardcast(query)) as NodeStatusMsg<ReturnType<KVAutomata['status']>>[]
         console.log(status)
         expect(status).toHaveLength(4)

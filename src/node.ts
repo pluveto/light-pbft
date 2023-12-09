@@ -1,7 +1,15 @@
 import jaysom from 'jayson/promise'
 import { Mutex } from 'async-mutex'
 
-import { multicast, createSeqIterator, withTimeout, PromiseHandler, digestMsg, createPromiseHandler, SeqIterator } from './util'
+import {
+    multicast,
+    createSeqIterator,
+    withTimeout,
+    PromiseHandler,
+    digestMsg,
+    createPromiseHandler,
+    SeqIterator
+} from './util'
 import { NodeConfig, SystemConfig } from './config'
 import { Automata } from './automata'
 import { NamedLogger } from './logger'
@@ -44,37 +52,36 @@ export class Node<TAutomataStatus> {
     nodes: Map<string, jaysom.client> = new Map() // name -> client
     view: number = 0
     systemConfig: SystemConfig
-    _seq: SeqIterator // only for master node
-    get seq() {
-        if (!this.isMaster()) {
-            throw new Error('only master node has seq iterator')
-        }
-        return this._seq
-    }
-    /**
-     * The low-water mark is equal to the sequence number of the last stable checkpoint.
-     * The high-water mark H = h + 2 * k, where is big enough so that replicas do 
-     * not stall waiting for a checkpoint to become stable
-     */
-    lowWaterMark = 0
-    get highWaterMark() {
-        return this.lowWaterMark + this.systemConfig.params.k * 2
-    }
-    get lastStableSeq() {
-        return this.lowWaterMark
-    }
+
     // logs are all the VALID messages received. it periodically get cleaned.
     // the logs work as a buffer, and entries are used to vote, validate
     logs!: Logs
 
     mutex = new Mutex()
 
-    getRequest(digest: string, sequence: number) {
-        return (this.logs.first(
-            x => x.type === 'pre-prepare'
-                && x.sequence === sequence
-                && x.digest === digest
-        ) as Optional<PrePrepareMsg>)?.request
+    _seq: SeqIterator // only for master node
+
+    get seq() {
+        if (!this.isMaster()) {
+            throw new Error('only master node has seq iterator')
+        }
+        return this._seq
+    }
+
+    /**
+     * The low-water mark is equal to the sequence number of the last stable checkpoint.
+     * The high-water mark H = h + 2 * k, where is big enough so that replicas do 
+     * not stall waiting for a checkpoint to become stable
+     */
+
+    lowWaterMark = 0
+
+    get highWaterMark() {
+        return this.lowWaterMark + this.systemConfig.params.k * 2
+    }
+
+    get lastStableSeq() {
+        return this.lowWaterMark
     }
 
     /**
@@ -111,18 +118,16 @@ export class Node<TAutomataStatus> {
         return calcMaster(this.view, this.systemConfig.nodes)
     }
 
-    isMaster() {
-        return this.master.name === this.name
-    }
-
     get name() {
         return this.config.name
     }
 
     _status: NodeStatus = NodeStatus.Idle
+
     get status() {
         return this._status
     }
+
     set status(s: NodeStatus) {
         this._status = s
         this.logger.debug('status switched to', s)
@@ -143,6 +148,18 @@ export class Node<TAutomataStatus> {
             })
             this.nodes.set(node.name, client)
         })
+    }
+
+    getRequest(digest: string, sequence: number) {
+        return (this.logs.first(
+            x => x.type === 'pre-prepare'
+                && x.sequence === sequence
+                && x.digest === digest
+        ) as Optional<PrePrepareMsg>)?.request
+    }
+
+    isMaster() {
+        return this.master.name === this.name
     }
 
     routes() {

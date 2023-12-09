@@ -53,6 +53,7 @@ export function createSeqIterator(max: number = Infinity) {
         }
     }
 }
+
 export async function multicast<T extends Message>(clients: jaysom.HttpClient[], payload: T): Promise<Message[]> {
     const reqs = clients.map((node) => node.request(payload.type, payload))
     const ret = await Promise.all(reqs)
