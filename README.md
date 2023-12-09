@@ -9,3 +9,4 @@ A simple implementation of PBFT in Typescript. 🚧 Work in progress 🚧
 - <https://yangzhe.me/2019/11/25/pbft>
 - <https://fisco-bcos-documentation.readthedocs.io/zh-cn/stable/docs/design/consensus/pbft.html>
 - <https://blog.csdn.net/t46414704152abc/article/details/103413324>
+- <https://zhuanlan.zhihu.com/p/79729221>
