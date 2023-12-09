@@ -44,4 +44,4 @@ jobs:
         run: pnpm install
 
       - name: Run tests
-        run: pnpm test --runInBand  --detectOpenHandles
+        run: pnpm run test --runInBand  --detectOpenHandles
