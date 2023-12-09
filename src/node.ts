@@ -1,4 +1,5 @@
 import jaysom from 'jayson/promise'
+import { Mutex } from 'async-mutex'
 
 import { multicast, createSeqIterator, deepEquals, sha256, withTimeout } from './util'
 import { NodeConfig, SystemConfig } from './config'
@@ -96,7 +97,7 @@ export class Node<TStatus> {
     requesting?: {
         msg: RequestMsg
     } & PromiseHandler<void>
-    mutex?: PromiseHandler<void>
+    mutex = new Mutex()
 
     findRequestInLog(digest: string) {
         return (this.logs.find(
@@ -215,46 +216,44 @@ export class Node<TStatus> {
 
         const bftRoutes: Routes = {
             'request': async (msg: RequestMsg): Promise<Message> => {
-                const logger = this.logger.derived('request')
+                const release = await this.mutex.acquire()
+                try {
+                    const logger = this.logger.derived('request')
 
-                if (this.master.name !== this.name) {
-                    throw new ErrorWithCode(ErrorCode.NotMaster)
-                }
+                    if (this.master.name !== this.name) {
+                        throw new ErrorWithCode(ErrorCode.NotMaster)
+                    }
 
-                while (this.mutex) {
-                    logger.debug('request mutex waiting')
-                    await this.mutex.promise
-                    logger.debug('request mutex resolved')
-                }
-                this.mutex = createPromiseHandler<void>('request wait timeout', 10 * 1000)
-                this.requesting = {
-                    msg: msg,
-                    ...createPromiseHandler<void>('handle user request timeout'),
-                }
-                const n = this.seq.next()
-                const prePrepareMsg: PrePrepareMsg = {
-                    type: 'pre-prepare',
-                    view: this.view,
-                    sequence: n,
-                    digest: await createMsgDigest(msg),
-                    request: msg,
-                }
-                logger.debug('boardcast', (prePrepareMsg))
-                const ret = await this.boardcast(prePrepareMsg)
-                logger.info('ret', ret)
-                logger.debug('pre-prepare boardcasted')
+                    this.requesting = {
+                        msg: msg,
+                        ...createPromiseHandler<void>('handle user request timeout'),
+                    }
+                    const n = this.seq.next()
+                    const prePrepareMsg: PrePrepareMsg = {
+                        type: 'pre-prepare',
+                        view: this.view,
+                        sequence: n,
+                        digest: await createMsgDigest(msg),
+                        request: msg,
+                    }
+                    logger.debug('boardcast', (prePrepareMsg))
+                    this.boardcast(prePrepareMsg).then((ret) => {
+                        logger.debug('boardcast ret', ret)
+                    }).catch((err) => {
+                        logger.error('boardcast err', err)
+                    })
 
-                // now await for pre-prepare, prepare and commit
-                await this.requesting.promise
-                this.requesting = undefined
-                logger.debug('requesting reset')
-                assert.equal(this.requesting, undefined)
-                assert.equal(this.status, NodeStatus.Idle)
-                const release = this.mutex.resolver
-                this.mutex = undefined
-                release()
-                return {
-                    type: 'ok'
+                    // now await for pre-prepare, prepare and commit
+                    await this.requesting.promise
+                    this.requesting = undefined
+                    logger.debug('requesting reset')
+                    assert.equal(this.requesting, undefined)
+                    assert.equal(this.status, NodeStatus.Idle)
+                    return {
+                        type: 'ok'
+                    }
+                } finally {
+                    release()
                 }
             },
 
