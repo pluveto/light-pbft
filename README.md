@@ -26,7 +26,7 @@ A simple implementation of OSDI PBFT (Practical Byzantine Fault Tolerance) proto
 **WARNING**:
 
 - This is not for production use, because the OSDI99 PBFT protocol doesn't support lagged node recovery.
-- Signature verification is implemented and it works, but it's expensive and not optimized, so it's disabled by during tests.
+- Signature verification is implemented and it works, but it's expensive and not optimized, so it's disabled during tests.
 
 ## Usage
 
@@ -69,7 +69,7 @@ You can invoke `corrupt <master-name>` to corrupt a master node, and observe the
 
 ### Setup Commands
 
-- when you execute `pnpm run client <client-name>`, some commands will be executed automatically. They are defined in `src/cmd/client.ts`, like:
+- when you execute `pnpm run client <client-name>`, some commands can be executed automatically. They are defined in `src/cmd/client.ts`, like:
 
 ```js
 [
@@ -400,6 +400,7 @@ Represents messages sent by clients, including:
 
 - RequestMsg
 - FindMasterMsg
+- CorruptMsg
 - QueryStatusMsg
 - QueryAutomataMsg
 
