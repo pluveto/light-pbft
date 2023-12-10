@@ -10,6 +10,7 @@ A simple implementation of OSDI PBFT (Practical Byzantine Fault Tolerance) proto
   - [x] Dynamic view change
   - [x] Log buffering
   - [x] Garbage collection
+  - [x] Validation, including digest, signature, sequence number, view number (between watermark), etc.
 - [x] Full logging, make it easy to debug and learn
 - [x] With unit tests and integration tests
 - [x] Simple command-line server/client
