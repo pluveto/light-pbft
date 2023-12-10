@@ -3,9 +3,16 @@
     "f": 0,
     "k": 10
   },
+  "clients": [
+    {
+      "name": "client0",
+      "prikey": "cb7c0c19c86a51a0601bb032cd25c12200e7a411571948015933679a4b24733f",
+      "pubkey": "04ece8785c8bf47b22197e6f9ee51e2d4cbde698ba098714a0bfcc4e051fab9c809fc6a99c336136b12daac440dda6c66bda6993ee18252f5959c176ca64e62f3b"
+    }
+  ],
   "nodes": [
     {
-      "name": "s1",
+      "name": "server0",
       "host": "127.0.0.1",
       "port": 32001,
       "prikey": "ab02b32c23e0ec0a46f830b5b3c78144bd7137e4a84f213c9882d428eeff019c",
