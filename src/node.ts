@@ -42,7 +42,8 @@ import {
     ViewChangeMsg,
     NewViewMsg,
     ReplyMsg,
-    SourcedMessage
+    SourcedMessage,
+    CorruptMsg
 } from './message'
 
 import { WaitGroup } from './waitgroup'
@@ -191,6 +192,10 @@ export class Node<TAutomataStatus> {
         this.status = NodeStatus._Malicious
     }
 
+    recover() {
+        this.status = NodeStatus.Idle
+    }
+
     // gracefully close the node
     async close() {
         await this.closed.wait()
@@ -293,8 +298,7 @@ export class Node<TAutomataStatus> {
 
         const proof = this.logs.select(x => x.type === 'checkpoint' && x.sequence === this.lastStableSeq) as CheckpointMsg[]
         if (proof.length <= 2 * this.systemConfig.params.f) {
-            logger.error('view change failed, not enough proof')
-            return
+            logger.warn('enough proof for view change')
         }
 
         const pendings = this.logs
@@ -364,6 +368,13 @@ export class Node<TAutomataStatus> {
                 }
                 return ret
             },
+            'corrupt': async ({ name }: CorruptMsg) => {
+                if (this.name === name) {
+                    this.corrupt()
+                    return ok('corrupted')
+                }
+                return ok('not me')
+            }
         }
         let signal: Optional<PromiseHandler<void>> = undefined
         const consensusRoutes: Routes = {

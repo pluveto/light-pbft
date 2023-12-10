@@ -2,19 +2,19 @@ import { ParamConfig } from './config'
 import { HasField } from './types'
 
 export enum ErrorCode {
-    NotMaster = 'not-master',
-    InvalidType = 'invalid-type',
-    InvalidSignature = 'invalid-signature',
-    InvalidView = 'invalid-view',
-    InvalidSequence = 'invalid-sequence',
+    DuplicatedMsg = 'duplicated-msg',
+    InternalError = 'internal-error',
     InvalidDigest = 'invalid-digest',
     InvalidRequest = 'invalid-request',
-    UnknownSender = 'unknown-sender',
+    InvalidSequence = 'invalid-sequence',
+    InvalidSignature = 'invalid-signature',
     InvalidStatus = 'invalid-status',
-    InternalError = 'internal-error',
-    DuplicatedMsg = 'duplicated-msg',
-    ViewChanging = 'view-changing',
+    InvalidType = 'invalid-type',
+    InvalidView = 'invalid-view',
+    NotMaster = 'not-master',
     Unknown = 'unknown',
+    UnknownSender = 'unknown-sender',
+    ViewChanging = 'view-changing',
 }
 
 export type ErrorMsg = {
@@ -30,7 +30,6 @@ export function createErrorMsg(code: ErrorCode, message?: string): Message {
         message,
     }
 }
-
 export class RemoteError extends Error {
     code: ErrorCode
     constructor(code: ErrorCode, message?: string) {
@@ -57,6 +56,10 @@ export function ok(message?: string): OkMsg {
     }
 }
 
+//===----------------------------------------------------------------------===//
+// Custom Messages
+//===----------------------------------------------------------------------===//
+
 export type FindMasterMsg = {
     type: 'find-master'
 };
@@ -70,6 +73,11 @@ export type MasterInfoMsg = {
     name: string
 };
 
+export type CorruptMsg = {
+    type: 'corrupt'
+    name: string
+};
+
 export type NodeStatusMsg<TAutomataStatus> = {
     type: 'node-status'
     view: number
@@ -80,6 +88,15 @@ export type NodeStatusMsg<TAutomataStatus> = {
     lowWaterMark: number
     highWaterMark: number
 }
+
+export type QueryAutomataMsg = {
+    type: 'query-automata'
+    command: string
+};
+
+//===----------------------------------------------------------------------===//
+// Consensus Protocol Messages
+//===----------------------------------------------------------------------===//
 
 export type RequestMsg = {
     type: 'request'
@@ -96,21 +113,8 @@ export type ReplyMsg = {
     result: string
 }
 
-export type QueryAutomataMsg = {
-    type: 'query-automata'
-    command: string
-};
-
 export type CommitMsg = {
     type: 'commit'
-    view: number
-    sequence: number
-    digest: string
-    node: string
-}
-
-export type CommittedLogMsg = {
-    type: 'committed'
     view: number
     sequence: number
     digest: string
@@ -133,6 +137,19 @@ export type PrepareMsg = {
     node: string
 };
 
+//===----------------------------------------------------------------------===//
+// Local Event Messages
+//===----------------------------------------------------------------------===//
+
+
+export type CommittedLogMsg = {
+    type: 'committed'
+    view: number
+    sequence: number
+    digest: string
+    node: string
+}
+
 export type PreparedLogMsg = {
     type: 'prepared'
     view: number
@@ -141,7 +158,10 @@ export type PreparedLogMsg = {
     node: string
 };
 
-// view change
+
+//===----------------------------------------------------------------------===//
+// Checkpoint && View Change Messages
+//===----------------------------------------------------------------------===//
 
 export type CheckpointMsg = {
     type: 'checkpoint'
@@ -187,6 +207,7 @@ export type LogMessage =
 
 export type ClientMessage =
     | RequestMsg
+    | CorruptMsg
     | FindMasterMsg
     | QueryStatusMsg
     | QueryAutomataMsg
@@ -197,13 +218,12 @@ export type Message =
     | RequestMsg
     | ReplyMsg
     | LogMessage
-    // General
     | ErrorMsg
     | OkMsg
-    // Domain specific
     | FindMasterMsg
     | QueryStatusMsg
     | QueryAutomataMsg
+    | CorruptMsg
     | MasterInfoMsg
     | NodeStatusMsg<unknown>
 

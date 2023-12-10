@@ -13,10 +13,19 @@ export async function repl() {
 }
 
 function printHelp() {
-    console.log(chalk.green('help'), 'print this message')
-    console.log(chalk.green('exit'), 'exit client')
-    console.log(chalk.green('request <payload>'), 'send request to target')
-    console.log(chalk.green('find-master'), 'find master node')
+    const help = {
+        'help': 'print this message',
+        'exit': 'exit client',
+        'request <payload>': 'send request to BFT cluster',
+        'find-master': 'find master node',
+        'status': 'query status of all nodes',
+        'corrupt <node-name>': 'make a node be a malicious byzantine node',
+    }
+    console.log('commands:')
+    for (const [cmd, desc] of Object.entries(help)) {
+        console.log(`  ${chalk.green(cmd)}: ${desc}`)
+    }
+
 }
 
 
@@ -29,9 +38,8 @@ function printNodes(nodes: NodeConfig[]) {
 }
 
 async function main() {
-    console.log(process.env.CONFIG_PATH)
-
-    const systemConfig = readConfig(process.env.CONFIG_PATH)
+    const configPath = process.env.LIGHT_PBFT_CLUSTER_CONFIG
+    const systemConfig = readConfig(configPath)
     const { clients, nodes } = systemConfig
     if (nodes.length === 0) {
         console.error('no node metadata found')
@@ -45,13 +53,26 @@ async function main() {
         return
     }
 
-    const z = new Client(clients[0], nodes, systemConfig.signature.enabled)
+    const clientName = process.argv[2]
+    if (!clientName) {
+        console.error('Usage: pnpm run client <client-name>')
+        process.exit(1)
+    }
+
+    const client = clients.find((client) => client.name === clientName)
+
+    if (!client) {
+        console.error(`client ${clientName} not found`)
+        return
+    }
+
+    const z = new Client(client, nodes, systemConfig.signature.enabled)
     const exit = false
-    const setupCommands = [
-        ['status'],
-        ['find-master'],
-        ['request', 'key1:value1'],
-        ['status']
+    const setupCommands: string[][] = [
+        // ['status'],
+        // ['find-master'],
+        // ['request', 'key1:value1'],
+        // ['status']
     ].reverse()
 
     const nextCommand = async () => {
@@ -104,10 +125,28 @@ async function main() {
                 const majorRet = findMajority(ret)
                 if (majorRet) {
                     const master = (majorRet as MasterInfoMsg).name
-                    console.log('master is %s', master)
+                    console.log('%s', master)
                 } else {
-                    console.log('no master found')
+                    console.error('no master found')
                 }
+                break
+            }
+            case 'corrupt': {
+                if (!args[0]) {
+                    console.warn('corrupt need node name')
+                    console.log('usage: corrupt <node-name>')
+                    break
+                }
+                const node = nodes.find((node) => node.name === args[0])
+                if (!node) {
+                    console.error('node not found')
+                    break
+                }
+                const ret = await z.send({
+                    type: 'corrupt',
+                    name: node.name,
+                })
+                console.log('corrupt ret: %o', ret)
                 break
             }
             default: {
