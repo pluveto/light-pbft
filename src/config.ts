@@ -85,7 +85,7 @@ export const schema = {
                         'type': 'string'
                     }
                 },
-                'required': ['name', 'host', 'port', 'pubkey', 'prikey']
+                'required': ['name', 'pubkey', 'prikey']
             }
         },
         'params': {
@@ -105,11 +105,16 @@ export const schema = {
 }
 
 export function readConfig(path?: string): SystemConfig {
-    const obj = JSON.parse(fs.readFileSync(path ?? 'configs/cluster.json').toString())
+    path = path ?? 'configs/cluster.json'
+    console.log(`reading config from ${path}`)
+
+    const obj = JSON.parse(fs.readFileSync(path).toString())
     const validator = new jsonschema.Validator()
     const result = validator.validate(obj, schema)
     if (!result.valid) {
         throw new Error(`invalid config: ${result.errors}`)
     }
-    return obj as SystemConfig
+    const config = obj as SystemConfig
+    config.signature = config.signature ?? { enabled: true }
+    return config
 }
