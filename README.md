@@ -2,6 +2,8 @@
 
 ![License](https://img.shields.io/github/license/pluveto/light-pbft?style=flat-square)
 
+[中文文档](docs/README.zh-CN.md)
+
 A simple implementation of OSDI PBFT (Practical Byzantine Fault Tolerance) protocol in TypeScript.
 
 ## Feature
@@ -66,6 +68,8 @@ Client CLI Commands:
 When a `request` command is executed, the client will send it to all nodes in the cluster, and wait for f+1 replies. (This is a slight improvement over the original PBFT protocol, which only send the request to the master node.)
 
 You can invoke `corrupt <master-name>` to corrupt a master node, and observe the view change process.
+
+**NOTE**: At least one checkpoint is required before the view change process can be started. So make sure you have executed some `request` commands and a checkpoint has been generated before invoking `corrupt <master-name>`.
 
 ### Setup Commands
 

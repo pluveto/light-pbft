@@ -67,6 +67,8 @@ CLI 客户端：
 
 你可以调用 `corrupt <master-name>` 来使主节点发生故障，并观察视图切换过程。
 
+**注意**：在启动视图切换过程之前，至少需要一个检查点。因此，在调用 `corrupt <master-name>` 之前，请确保已执行了一些 `request` 命令并生成了检查点。
+
 ### 设置命令
 
 - 当执行 `pnpm run client <client-name>` 时，某些命令可以自动执行。它们在 `src/cmd/client.ts` 中定义，例如：
