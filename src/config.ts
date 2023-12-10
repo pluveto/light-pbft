@@ -105,7 +105,7 @@ export const schema = {
 }
 
 export function readConfig(path?: string): SystemConfig {
-    const obj = JSON.parse(fs.readFileSync(path ?? 'nodes/config.json').toString())
+    const obj = JSON.parse(fs.readFileSync(path ?? 'configs/cluster.json').toString())
     const validator = new jsonschema.Validator()
     const result = validator.validate(obj, schema)
     if (!result.valid) {
