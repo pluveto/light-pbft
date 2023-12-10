@@ -1,6 +1,10 @@
 {
-  "name": "poly",
-  "version": "1.0.0",
+  "name": "light-pbft",
+  "version": "0.0.1",
+  "repository": {
+    "type": "github",
+    "url": "https://github.com/pluveto/light-pbft"
+  },
   "main": "index.js",
   "license": "MIT",
   "type": "commonjs",

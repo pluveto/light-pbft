@@ -10,6 +10,7 @@ export enum ErrorCode {
     InvalidStatus = 'invalid-status',
     InternalError = 'internal-error',
     DuplicatedMsg = 'duplicated-msg',
+    ViewChanging = 'view-changing',
     Unknown = 'unknown',
 }
 
@@ -27,7 +28,7 @@ export function createErrorMsg(code: ErrorCode, message?: string): Message {
     }
 }
 
-export class ErrorWithCode extends Error {
+export class RemoteError extends Error {
     code: ErrorCode
     constructor(code: ErrorCode, message?: string) {
         super(message)
@@ -37,7 +38,7 @@ export class ErrorWithCode extends Error {
 
 export function requires(condition: boolean, code: ErrorCode, message?: string) {
     if (!condition) {
-        throw new ErrorWithCode(code, message)
+        throw new RemoteError(code, message)
     }
 }
 
@@ -82,6 +83,15 @@ export type RequestMsg = {
     timestamp: number
     payload: string
 };
+
+// <REPLY, v, t, c, i, r>
+export type ReplyMsg = {
+    type: 'reply'
+    view: number
+    timestamp: number
+    node: string
+    result: string
+}
 
 export type QueryAutomataMsg = {
     type: 'query-automata'
@@ -140,23 +150,23 @@ export type CheckpointMsg = {
 export type ViewChangeMsg = {
     type: 'view-change'
     view: number // the view to change to
-    node: string
-    sequence: number
-    stableProof: CommittedLogMsg[] // 2f+1 stable logs
-    P: Pm[]
+    node: string // the node who initiates the view change
+    sequence: number // the sequence of the last stable checkpoint, i.e., n in the paper
+    proof: CheckpointMsg[] // 2f+1 stable logs, i.e., C in the paper
+    pendings: PendingPrepare[] // pending pre-prepare msgs and related prepare msgs, i.e., P in the paper
 }
 
-export type Pm = {
-    prePrepareMsgs: PrePrepareMsg[]
+export type PendingPrepare = {
+    prePrepareMsg: PrePrepareMsg
     prepareMsgs: PrepareMsg[]
 }
 
 export type NewViewMsg = {
     type: 'new-view'
-    view: number
-    sequence: number
-    V: ViewChangeMsg[] // 2f+1 view change msgs
-    O: PrePrepareMsg[] // 2f+1 pre-prepare msgs
+    view: number // the view to change to
+    sequence: number // the sequence of the last stable checkpoint, i.e., n in the paper
+    proof: ViewChangeMsg[] // 2f+1 view change msgs, i.e., V in the paper
+    pendings: PrePrepareMsg[] // 2f+1 pre-prepare msgs, i.e., O in the paper
 }
 
 export type LogMessage =
@@ -174,6 +184,7 @@ export type LogMessage =
 
 export type Message =
     | RequestMsg
+    | ReplyMsg
     | LogMessage
     // General
     | ErrorMsg

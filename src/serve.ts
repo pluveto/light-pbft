@@ -45,14 +45,17 @@ export async function serve(name: string, systemConfig: SystemConfig) {
 
     return {
         node,
-        close: () => new Promise<void>((resolve) => {
-            http.close((err) => {
-                if (err) {
-                    console.error(err)
-                }
-                console.log(`${config.name} is closed`)
-                resolve()
+        close: async () => {
+            await node.close()
+            await new Promise<void>((resolve) => {
+                http.close((err) => {
+                    if (err) {
+                        console.error(err)
+                    }
+                    console.log(`${config.name} is closed`)
+                    resolve()
+                })
             })
-        })
+        }
     }
 }

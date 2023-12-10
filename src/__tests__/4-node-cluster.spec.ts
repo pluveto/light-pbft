@@ -1,4 +1,4 @@
-import { KVAutomata } from '../automata'
+import { KVAutomataState } from '../automata'
 import { Client } from '../client'
 import { SystemConfig } from '../config'
 import { NodeStatusMsg, QueryStatusMsg, RequestMsg } from '../message'
@@ -35,9 +35,8 @@ describe('4 Nodes Cluster where f = 1', () => {
             timestamp: Date.now(),
             payload: 'key1:value1',
         })
-        expect(ret).toMatchObject({
-            type: 'ok',
-        })
+        expect(ret.type).toBe('reply')
+
 
         const status = await client.send({
             type: 'query-automata',
@@ -56,9 +55,8 @@ describe('4 Nodes Cluster where f = 1', () => {
             timestamp: Date.now(),
             payload: 'key1:value1',
         })
-        expect(ret).toMatchObject({
-            type: 'ok',
-        })
+        expect(ret.type).toBe('reply')
+
 
         const status = await client.send({
             type: 'query-automata',
@@ -79,15 +77,13 @@ describe('4 Nodes Cluster where f = 1', () => {
                 payload: `key${i}:value${i}`,
             }
             const ret = await client.send(req)
-            expect(ret).toMatchObject({
-                type: 'ok',
-            })
+            expect(ret.type).toBe('reply')
         }
 
         const query: QueryStatusMsg = {
             type: 'query-status',
         }
-        const status = (await client.boardcast(query)) as NodeStatusMsg<ReturnType<KVAutomata['status']>>[]
+        const status = (await client.boardcast(query)) as NodeStatusMsg<KVAutomataState>[]
         console.log(status)
         expect(status).toHaveLength(4)
 
@@ -108,9 +104,7 @@ describe('4 Nodes Cluster where f = 1', () => {
         }
         const rets = await Promise.all(tasks)
 
-        expect(rets).toEqual(Array(numRequest).fill({
-            type: 'ok',
-        }))
+        expect(rets.every((ret) => ret.type === 'reply')).toBe(true)
 
         for (let i = 0; i < numRequest; i++) {
             const status = await client.send({
@@ -127,7 +121,7 @@ describe('4 Nodes Cluster where f = 1', () => {
             type: 'query-status',
         }
 
-        const status = (await client.boardcast(query)) as NodeStatusMsg<ReturnType<KVAutomata['status']>>[]
+        const status = (await client.boardcast(query)) as NodeStatusMsg<KVAutomataState>[]
         console.log(status)
         expect(status).toHaveLength(4)
 

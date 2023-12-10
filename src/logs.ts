@@ -17,11 +17,13 @@ export class Logs {
         this.digest = digest
     }
 
-    async append(msg: LogMessage) {
-        const digest = this.digest(msg)
-        const entry: LogEntry = [digest, msg]
-        this.logger?.debug('appending', entry)
-        this.entries.push(entry)
+    async append(...msgs: LogMessage[]) {
+        msgs.forEach(msg => {
+            const digest = this.digest(msg)
+            const entry: LogEntry = [digest, msg]
+            this.logger?.debug('appending', entry)
+            this.entries.push(entry)
+        })
     }
 
     select<T extends LogMessage>(predicate: (msg: LogMessage) => boolean): T[] {

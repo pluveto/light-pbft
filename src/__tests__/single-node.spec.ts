@@ -1,4 +1,6 @@
+import { KVAutomataState } from '../automata'
 import { Client } from '../client'
+import { NodeStatusMsg, QueryStatusMsg } from '../message'
 import { serve } from '../serve'
 import { createSingleNodeConfig } from './util'
 
@@ -29,9 +31,7 @@ describe('Single Node', () => {
             timestamp: Date.now(),
             payload: 'key1:value1',
         })
-        expect(ret).toMatchObject({
-            type: 'ok',
-        })
+        expect(ret.type).toBe('reply')
 
         const status = await client.send({
             type: 'query-automata',
@@ -57,9 +57,7 @@ describe('Single Node', () => {
         }
         const rets = await Promise.all(tasks)
 
-        expect(rets).toEqual(Array(N).fill({
-            type: 'ok',
-        }))
+        expect(rets.every((ret) => ret.type === 'reply')).toBe(true)
 
         for (let i = 0; i < N; i++) {
             const status = await client.send({
@@ -71,5 +69,11 @@ describe('Single Node', () => {
                 message: `value${i}`,
             })
         }
+
+        const query: QueryStatusMsg = {
+            type: 'query-status',
+        }
+        const status = (await client.send(query)) as NodeStatusMsg<KVAutomataState>
+        console.log(status)
     })
 })
