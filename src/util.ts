@@ -69,12 +69,6 @@ export function genKeyPair() {
     }
 }
 
-export function sleep(ms: number) {
-    return new Promise((resolve) => {
-        setTimeout(resolve, ms)
-    })
-}
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function deepEquals(a: any, b: any) {
     if (a === b) return true
@@ -96,6 +90,13 @@ export function deepEquals(a: any, b: any) {
     return true
 }
 
+export class TimeoutError extends Error {
+    constructor(message: string) {
+        super(message)
+        this.name = 'TimeoutError'
+    }
+}
+
 export function withTimeout<T>(promise: Promise<T>, timeout: number, message: string | Error = 'timed out'): Promise<T> {
     if (timeout === Infinity || timeout <= 0) {
         return promise
@@ -103,7 +104,7 @@ export function withTimeout<T>(promise: Promise<T>, timeout: number, message: st
     return new Promise((resolve, reject) => {
         const timeoutHandle = setTimeout(() => {
             if (typeof message === 'string') {
-                reject(new Error(message))
+                reject(new TimeoutError(message))
             } else {
                 reject(message)
             }
@@ -162,3 +163,5 @@ export function createPromiseHandler<T>(timeoutMessage?: string, timeout: number
 
 
 export type PromiseHandler<T> = ReturnType<typeof createPromiseHandler<T>>
+
+

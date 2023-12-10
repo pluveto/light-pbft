@@ -41,7 +41,7 @@ export async function createSingleNodeConfig(name: string = 'node'): Promise<Sys
         ],
         params: {
             f: 0,
-            k: 10,
+            k: 5,
         }
     }
 }

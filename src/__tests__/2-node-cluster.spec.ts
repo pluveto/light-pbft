@@ -31,9 +31,7 @@ describe('2 Nodes Cluster where f = 0', () => {
             timestamp: Date.now(),
             payload: 'key1:value1',
         })
-        expect(ret).toMatchObject({
-            type: 'ok',
-        })
+        expect(ret.type).toBe('reply')
 
         const status = await client.send({
             type: 'query-automata',
@@ -59,9 +57,7 @@ describe('2 Nodes Cluster where f = 0', () => {
         }
         const rets = await Promise.all(tasks)
 
-        expect(rets).toEqual(Array(N).fill({
-            type: 'ok',
-        }))
+        expect(rets.every((ret) => ret.type === 'reply')).toBe(true)
 
         for (let i = 0; i < N; i++) {
             const status = await client.send({

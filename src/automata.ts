@@ -13,10 +13,12 @@ export interface Automata<TStatus> {
     digest(): string
 }
 
+export type KVAutomataState = ReturnType<KVAutomata['status']>
+
 /**
  * A simple key-value storage automata as an example implementation of Automata.
  */
-export class KVAutomata implements Automata<ReturnType<KVAutomata['status']>> {
+export class KVAutomata implements Automata<KVAutomataState> {
     state: Map<string, string> = new Map()
     history: string[] = []
     height: number = 0
