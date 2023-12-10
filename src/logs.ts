@@ -44,8 +44,11 @@ export class Logs {
         return undefined
     }
 
-    exists(Logmessage: LogMessage): boolean {
-        const digest = this.digest(Logmessage)
+    exists(arg: LogMessage | ((msg: LogMessage) => boolean)): boolean {
+        if (typeof arg === 'function') {
+            return this.entries.some(([, msg]) => arg(msg))
+        }
+        const digest = this.digest(arg)
         return this.entries.some(([d]) => d === digest)
     }
 
