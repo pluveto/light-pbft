@@ -474,4 +474,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - <https://zhuanlan.zhihu.com/p/79729221>
 - <https://sawtooth.hyperledger.org/docs/1.2/pbft/architecture.html>
 - <http://qyuan.top/2019/09/03/pbft-3/>
-- <https://pluveto.me/posts/pbft-key-points/>
+- <https://chenquan.me/posts/pbft-key-points/>

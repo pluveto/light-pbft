@@ -132,7 +132,7 @@ CLI 客户端：
 
 ### 配置模式
 
-配置模式请参见 [src/config.ts](src/config.ts)。
+配置模式请参见 [../src/config.ts](../src/config.ts)。
 
 ### 示例配置文件
 
@@ -459,7 +459,7 @@ KVAutomata 类是 Automata 接口的一个示例实现。它表示一个简单�
 
 ## 许可证
 
-本项目基于 MIT 许可证进行许可 - 有关详细信息，请参阅 [LICENSE](LICENSE) 文件。
+本项目基于 MIT 许可证进行许可 - 有关详细信息，请参阅 [LICENSE](../LICENSE) 文件。
 
 ## 参考资料
 
@@ -472,4 +472,4 @@ KVAutomata 类是 Automata 接口的一个示例实现。它表示一个简单�
 - <https://zhuanlan.zhihu.com/p/79729221>
 - <https://sawtooth.hyperledger.org/docs/1.2/pbft/architecture.html>
 - <http://qyuan.top/2019/09/03/pbft-3/>
-- <https://pluveto.me/posts/pbft-key-points/>
+- <https://chenquan.me/posts/pbft-key-points/>
