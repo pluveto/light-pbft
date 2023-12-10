@@ -1,6 +1,6 @@
 import { SystemConfig } from '../config'
 import net from 'net'
-import { genKeyPair } from '../util'
+import { genKeyPair } from '../sign'
 
 export async function findPort(): Promise<number> {
     const nextPort = () => Math.floor(Math.random() * 10000) + 10000

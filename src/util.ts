@@ -2,8 +2,6 @@ import * as net from 'net'
 import jaysom from 'jayson/promise'
 import crypto from 'crypto'
 import { Message } from './message'
-import * as elliptic from 'elliptic'
-const ec = new elliptic.ec('secp256k1')
 
 export function getAvailablePort(): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -61,13 +59,7 @@ export async function multicast<T extends Message>(clients: jaysom.HttpClient[],
 }
 
 
-export function genKeyPair() {
-    const keyPair = ec.genKeyPair()
-    return {
-        prikey: keyPair.getPrivate('hex'),
-        pubkey: keyPair.getPublic('hex')
-    }
-}
+
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function deepEquals(a: any, b: any) {
