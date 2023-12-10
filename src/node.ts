@@ -21,28 +21,28 @@ import {
 } from './util'
 
 import {
+    ok,
+    requires,
+    Message,
     CommitMsg,
     CommittedLogMsg,
     ErrorCode,
     RemoteError,
     MasterInfoMsg,
-    Message,
     PrePrepareMsg,
     PrepareMsg,
     PreparedLogMsg,
     QueryAutomataMsg,
-    RequestMsg, createErrorMsg, ok, requires, CheckpointMsg, NodeStatusMsg, ViewChangeMsg, NewViewMsg, ReplyMsg
+    RequestMsg,
+    createErrorMsg,
+    CheckpointMsg,
+    NodeStatusMsg,
+    ViewChangeMsg,
+    NewViewMsg,
+    ReplyMsg
 } from './message'
-import { WaitGroup } from './waitgroup'
-// import { Timer } from './timer'
 
-function calcMaster(view: number, nodes: NodeConfig[]) {
-    const masterIndex = view % nodes.length
-    return {
-        name: nodes[masterIndex].name,
-        index: masterIndex,
-    }
-}
+import { WaitGroup } from './waitgroup'
 
 export enum NodeStatus {
     Idle = 'idle',
@@ -58,30 +58,18 @@ type RouteHandler<T extends Message> = (msg: T) => Promise<any>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Routes = { [key: string]: RouteHandler<any> };
 
-/**
- * NodeTimeoutTimers is a collection of timers used by a node.
- * On these related stages, if a timeout occurs, the node will attempt to change to a higher view.
- */
-// type NodeTimeoutTimers = {
-//     prePrepareTimer: Timer
-//     prepareTimer: Timer
-//     commitTimer: Timer
-//     viewChangeTimer: Timer
-// }
-
 export class Node<TAutomataStatus> {
     config: NodeConfig
+    systemConfig: SystemConfig
     logger: NamedLogger
     nodes: Map<string, jaysom.client> = new Map() // name -> client
-    view: number = 0
-    viewChangeOffset = 0
-    systemConfig: SystemConfig
-    closed = new WaitGroup() // for graceful shutdown
+
+    // for graceful shutdown. ensure all async tasks are done before close
+    closed = new WaitGroup()
 
     // logs are all the VALID messages received. it periodically get cleaned.
     // the logs work as a buffer, and entries are used to vote, validate
-    logs!: Logs
-
+    logs: Logs
     mutex = new Mutex()
 
     _seq: SeqIterator // only for master node
@@ -96,6 +84,15 @@ export class Node<TAutomataStatus> {
     get index() {
         return this.systemConfig.nodes.indexOf(this.config)
     }
+
+
+    view: number = 0
+    nextViewOffset = 0
+
+    get nextView() {
+        return (this.view + this.nextViewOffset) % this.systemConfig.nodes.length
+    }
+
     /**
      * The low-water mark is equal to the sequence number of the last stable checkpoint.
      * The high-water mark H = h + 2 * k, where is big enough so that replicas do 
@@ -143,7 +140,7 @@ export class Node<TAutomataStatus> {
     automata: Automata<TAutomataStatus>
 
     get master() {
-        const { index } = calcMaster(this.view, this.systemConfig.nodes)
+        const index = this.view % this.systemConfig.nodes.length
         return this.systemConfig.nodes[index]
     }
 
@@ -169,7 +166,6 @@ export class Node<TAutomataStatus> {
     // if true, the current node stops accepting messages 
     // other than checkpoint, view-change, and new-view messages
     viewChanging = false
-    // timers: NodeTimeoutTimers
 
     constructor(meta: NodeConfig, config: SystemConfig, automata: Automata<TAutomataStatus>) {
         this._seq = createSeqIterator()
@@ -179,12 +175,6 @@ export class Node<TAutomataStatus> {
         this.config = meta
         this.systemConfig = config
         this.automata = automata
-        // this.timers = {
-        //     prePrepareTimer: new Timer(3000, this.viewChange, derive('timer/pre-prepare')),
-        //     prepareTimer: new Timer(3000, this.viewChange, derive('timer/prepare')),
-        //     commitTimer: new Timer(3000, this.viewChange, derive('timer/commit')),
-        //     viewChangeTimer: new Timer(3000, this.viewChange, derive('timer/view-change')),
-        // }
 
         this.systemConfig.nodes.map((node) => {
             const client = jaysom.client.http({
@@ -233,15 +223,6 @@ export class Node<TAutomataStatus> {
         return wrapper(this._routes())
     }
 
-    onCommitted(msg: CommittedLogMsg) {
-        this.logger.debug('onCommitted', msg)
-        this.height++
-
-        if (this.height % this.systemConfig.params.k === 0) {
-            this.checkpoint()
-        }
-    }
-
     checkpoint() {
         const logger = this.logger.derived('checkpoint')
 
@@ -259,16 +240,21 @@ export class Node<TAutomataStatus> {
             node: this.name,
         }
 
-        this.withTrace(this.boardcast(checkpointMsg))
+        this.withTrace(this.boardcast(checkpointMsg)).catch((error) => {
+            if (error instanceof TimeoutError) {
+                logger.warn('checkpoint timeout, invoke view change')
+                this.viewChange()
+            }
+        })
     }
 
     viewChange() {
         const logger = this.logger.derived('view-change')
         logger.debug('view change triggered')
 
-        this.viewChangeOffset++
+        this.nextViewOffset++
 
-        const newView = (this.view + this.viewChangeOffset) % this.systemConfig.nodes.length
+        const newView = this.nextView
         logger.debug('attempt to change view, current view', this.view, 'new view', newView)
 
         const proof = this.logs.select(x => x.type === 'checkpoint' && x.sequence === this.lastStableSeq) as CheckpointMsg[]
@@ -276,6 +262,7 @@ export class Node<TAutomataStatus> {
             logger.error('view change failed, not enough proof')
             return
         }
+
         const pendings = this.logs
             .select(x => x.type === 'pre-prepare' && x.sequence > this.lastStableSeq)
             .map((pp) => {
@@ -297,8 +284,7 @@ export class Node<TAutomataStatus> {
 
         this.withTrace(this.boardcast(viewChangeMsg)).catch((error) => {
             if (error instanceof TimeoutError) {
-                logger.error('view change timeout, head to next view')
-                logger.warn('view change timeout, call view-change again')
+                logger.warn('view change timeout, head to next view')
                 this.viewChange()
             }
         })
@@ -412,7 +398,12 @@ export class Node<TAutomataStatus> {
                         digest: digest,
                         request: msg,
                     }
-                    this.withTrace(this.boardcast(prePrepareMsg))
+                    this.withTrace(this.boardcast(prePrepareMsg)).catch((error) => {
+                        if (error instanceof TimeoutError) {
+                            logger.warn('pre-prepare timeout, invoke view change')
+                            this.viewChange()
+                        }
+                    })
 
                     // now await for pre-prepare, prepare and commit
                     await signal.promise
@@ -446,6 +437,8 @@ export class Node<TAutomataStatus> {
 
             // a pre-prepare should be sent by master and receive only once
             'pre-prepare': async (msg: PrePrepareMsg) => {
+                // const logger = this.logger.derived('routes/pre-prepare')
+
                 requires(!this.viewChanging, ErrorCode.ViewChanging, 'view changing, not available')
 
                 if (msg.digest === '' && msg.request.payload === '') {
@@ -500,7 +493,7 @@ export class Node<TAutomataStatus> {
 
                 this.withTrace(this.boardcast(prepareMsg))
 
-                return ok('prepare boardcasted')
+                return ok('prepare boardcasting')
             },
             // prepare messages are sent by all pre-prepared nodes and will be received many times
             // when a PrepareMsg is received, the tx may have been prepared, and even committed locally (or not)
@@ -580,6 +573,7 @@ export class Node<TAutomataStatus> {
                 }
 
                 const ret = await this.boardcast(commitMsg)
+
                 logger.debug('ret', ret)
                 return {
                     message: 'commit boardcasted'
@@ -590,18 +584,21 @@ export class Node<TAutomataStatus> {
             // when a CommitMsg is received, the tx may have been committed locally or not
             'commit': async (msg: CommitMsg) => {
                 const logger = this.logger.derived('routes/commit')
+
                 requires(!this.viewChanging, ErrorCode.ViewChanging, 'view changing, not available')
                 requires(this.seqValid(msg.sequence), ErrorCode.InvalidSequence)
+
                 // prevent duplicated commit
                 requires(!this.logs.exists(msg), ErrorCode.DuplicatedMsg, 'duplicated commit message')
 
-                if (this.logs.first(
+                const committed = this.logs.exists(
                     x => x.type === 'committed'
                         && x.digest === msg.digest
                         && x.view == this.view
                         && x.sequence === msg.sequence
                         && x.node === this.name
-                )) {
+                )
+                if (committed) {
                     return ok('already committed due to more than 2f commit messages')
                 } else {
                     requires(this.status !== NodeStatus.Idle, ErrorCode.InternalError, 'idle and not committed')
@@ -617,6 +614,7 @@ export class Node<TAutomataStatus> {
                 if (!log) {
                     throw new RemoteError(ErrorCode.InvalidStatus, 'no related pre-prepare message found for commit message')
                 }
+
                 // edge case: the current node has received a pre-prepare message and is in the pre-prepared state.
                 // however, other nodes have already switched to the prepared state and started broadcasting commit messages,
                 // so the current node will directly receive commit messages in its pre-prepared state.
@@ -674,7 +672,13 @@ export class Node<TAutomataStatus> {
                 }
                 this.status = NodeStatus.Idle
 
-                this.onCommitted(confirm)
+                this.logger.debug('onCommitted', msg)
+                this.height++
+
+                if (this.height % this.systemConfig.params.k === 0) {
+                    this.checkpoint()
+                }
+
                 return {
                     message: 'committed'
                 }
@@ -713,15 +717,15 @@ export class Node<TAutomataStatus> {
                 return ok('checkpoint created')
             },
 
-            // the critical reason for view change is that the current master node is 
-            // unable to reach consensus within a limited time
-            // there are 4 paths:
-            // - any normal phase timeout, means the pre-prepare -> prepare -> commit cannot be completed within a certain time
-            // - any view-change phase timeout, means the current view change cannot be completed within a certain time
-            // - the timer does not timeout, but the number of valid view-change messages reaches f+1,
+            // the critical reason for view change is that the current master node is unable to reach consensus within a limited time
+            // 
+            // there are 4 cases:
+            // 1. normal phase timeout, means the pre-prepare -> prepare -> commit cannot be completed within a certain time
+            // 2. view-change phase timeout, means the current view change cannot be completed within a certain time
+            // 3. the timer does not timeout, but the number of valid view-change messages reaches f+1,
             //   which means that there are already f+1 non-byzantine nodes initiating a new view change,
             //   and the current node enters the view change without waiting for timeout
-            // - new-view message is invalid, which means that the master node in the view change phase is a byzantine node
+            // 4. new-view message is invalid, which means that the master node in the view change phase is a byzantine node
             // 
             // view-change messages are sent by all nodes and only handled by new master node (msg.view % nodes.length === current node)
             'view-change': async (msg: ViewChangeMsg) => {
@@ -738,6 +742,7 @@ export class Node<TAutomataStatus> {
                     logger.debug('enter view change state, stop accepting new requests')
                     this.viewChanging = true
                 }
+
                 this.logs.append(msg)
 
                 // collect 2f+1 view-change messages
@@ -746,6 +751,7 @@ export class Node<TAutomataStatus> {
                         && x.view === msg.view
                         && x.sequence === msg.sequence
                 )
+
                 const count = viewChangeMsgs.length
 
                 if (count <= 2 * this.systemConfig.params.f) {
@@ -766,9 +772,9 @@ export class Node<TAutomataStatus> {
 
                 this.logs.append(...newViewMsg.pendings)
 
-                const ckpts = msg.proof
                 if (minS > this.lastStableSeq) {
                     logger.debug('current node is lagged or malicious, supply missing logs')
+                    const ckpts = msg.proof
                     const newCkpts = ckpts.filter(x => this.lastStableSeq < x.sequence && x.sequence <= minS)
                     const lastCkpt = newCkpts.reduce((prev, curr) => {
                         return prev.sequence > curr.sequence ? prev : curr
@@ -781,28 +787,39 @@ export class Node<TAutomataStatus> {
                     logger.debug(`clear logs with seq < ${lastCkpt.sequence}`)
                     this.logs.clear(x => x.sequence < lastCkpt.sequence)
 
-                    // TODO: seems the txs in the range (latestProof.sequence, minS] are lost?
+                    // when a node is lagged too much, seems the txs in the range (latestProof.sequence, minS] are lost
+                    // a negotiation mechanism is needed to recover them, but it's not implemented here, osdi99 pbft
                 }
 
                 this.viewChanging = false
-                this.viewChangeOffset = 0
+                this.nextViewOffset = 0
                 this.view = msg.view
                 this.seq.reset(minS)
 
                 this.withTrace(this.boardcast(newViewMsg))
 
-                return ok('new-view boardcasted')
+                return ok('new-view boardcasting')
             },
             'new-view': async (msg: NewViewMsg) => {
                 const logger = this.logger.derived('routes/new-view')
+
                 if (msg.view % this.systemConfig.nodes.length === this.index) {
-                    return ok('master, ignore')
+                    return ok('master already switched to new view, ignore')
+                }
+
+                const { minS, pendings } = this.inferPendingsFromProof(msg.proof, msg.view, logger)
+
+                // validate msg, pendings should be consistent with msg.pendings
+                if (!deepEquals(pendings, msg.pendings)) {
+                    logger.error('pendings are not consistent, the new master node may be malicious')
+                    if (msg.view === this.nextView) {
+                        this.nextViewOffset++ // avoid switching to the malicious view
+                    }
+                    this.viewChange()
+                    throw new RemoteError(ErrorCode.InvalidStatus, 'pendings are not consistent, view changing')
                 }
 
                 this.viewChanging = true
-                // validate msg, pendings should be consistent with msg.pendings
-                const { minS, pendings } = this.inferPendingsFromProof(msg.proof, msg.view, logger)
-                requires(deepEquals(pendings, msg.pendings), ErrorCode.InvalidStatus, 'pendings are not consistent')
 
                 const newCkpts = msg.proof.filter(x => this.lastStableSeq < x.sequence && x.sequence <= minS)
                 if (newCkpts.length === 0) {
@@ -827,10 +844,11 @@ export class Node<TAutomataStatus> {
                 logger.debug('view changed from', oldView, 'to', this.view)
 
                 this.viewChanging = false
-                this.viewChangeOffset = 0
+                this.nextViewOffset = 0
 
                 // execute the pending pre-prepare messages
                 logger.debug('execute pendings', msg.pendings)
+
                 for (const pp of msg.pendings) {
                     this.inject(pp)
                 }
@@ -867,6 +885,7 @@ export class Node<TAutomataStatus> {
         let pendings: PrePrepareMsg[]
         if (pps.length > 0) {
             logger?.debug('reconstruct pre-prepare messages', pps)
+
             pendings = pps.map(pp => {
                 return {
                     ...pp,
@@ -875,6 +894,7 @@ export class Node<TAutomataStatus> {
             })
         } else {
             logger?.debug('no pre-prepare messages to reconstruct')
+
             const emptyPP: PrePrepareMsg = {
                 type: 'pre-prepare',
                 view: newView,
@@ -920,6 +940,9 @@ export class Node<TAutomataStatus> {
         return handler(msg)
     }
 
+    /**
+     * check if the sequence number is valid between [h, H]
+     */
     seqValid(seq: number) {
         if (!(this.lowWaterMark <= seq)) {
             this.logger.error('seq', seq, 'is less than lowWaterMark', this.lowWaterMark)
