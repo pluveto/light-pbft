@@ -4,10 +4,15 @@ import { serve } from '../serve'
 
 async function main() {
     const name = process.argv[2]
-    const systemConfig = readConfig(process.env.CONFIG_PATH)
+    if (!name) {
+        console.error('Usage: pnpm run server <node-name>')
+        process.exit(1)
+    }
+
+    const systemConfig = readConfig(process.env.LIGHT_PBFT_CLUSTER_CONFIG)
     const config = systemConfig.nodes.find((node) => node.name === name)
     if (!config) {
-        throw new Error('node not found')
+        throw new Error(`node ${name} not found`)
     }
 
     serve(config.name, systemConfig)
