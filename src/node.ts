@@ -298,7 +298,8 @@ export class Node<TAutomataStatus> {
 
         const proof = this.logs.select(x => x.type === 'checkpoint' && x.sequence === this.lastStableSeq) as CheckpointMsg[]
         if (proof.length <= 2 * this.systemConfig.params.f) {
-            logger.warn('enough proof for view change')
+            logger.error('no enough proof for view change')
+            return
         }
 
         const pendings = this.logs
