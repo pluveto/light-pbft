@@ -5,19 +5,25 @@ A simple implementation of OSDI PBFT (Practical Byzantine Fault Tolerance) proto
 ## Feature
 
 - [x] Full PBFT protocol
-  - [x] Pre-prepare, prepare, commit over BFT consensus
+  - [x] 3 Phase BFT consensus (pre-prepare, prepare, commit)
   - [x] Checkpoint mechanism
   - [x] Dynamic view change
   - [x] Log buffering
   - [x] Garbage collection
-  - [x] Validation, including digest, signature, sequence number, view number (between watermark), etc.
+  - [x] Validation, including digest, sequence number, view number (between watermark), etc.
+  - [x] SECP256K1 signature, SHA256 message digest
 - [x] Full logging, make it easy to debug and learn
 - [x] With unit tests and integration tests
 - [x] Simple command-line server/client
-- [x] Support custom network layer (default: jsonrpc over http)
-- [x] Support custom state machine and storage layer (default: a simple in-memory storage state machine)
+- [x] Support custom network layer
+  - default: jsonrpc over http
+- [x] Support custom state machine and storage layer
+  - default: a simple in-memory storage state machine
 
-**WARNING**: This is not for production use, because the osdi99 PBFT protocol doesn't support lagged node recovery.
+**WARNING**:
+
+- This is not for production use, because the osdi99 PBFT protocol doesn't support lagged node recovery.
+- Signature verification is implemented and it works, but it's expensive and not optimized, so it's disabled by default.
 
 ## References
 

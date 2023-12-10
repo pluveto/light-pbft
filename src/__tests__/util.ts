@@ -1,6 +1,7 @@
 import { SystemConfig } from '../config'
 import net from 'net'
-import { genKeyPair } from '../util'
+import { genKeyPair } from '../sign'
+import { createElementsAsync } from '../util'
 
 export async function findPort(): Promise<number> {
     const nextPort = () => Math.floor(Math.random() * 10000) + 10000
@@ -31,11 +32,20 @@ export async function findPort(): Promise<number> {
 
 export async function createSingleNodeConfig(name: string = 'node'): Promise<SystemConfig> {
     return {
+        signature: {
+            enabled: false
+        },
         nodes: [
             {
                 name: name,
-                host: 'localhost',
+                host: '127.0.0.1',
                 port: await findPort(),
+                ...genKeyPair(),
+            }
+        ],
+        clients: [
+            {
+                name: 'client',
                 ...genKeyPair(),
             }
         ],
@@ -51,27 +61,31 @@ type CreateClusterConfigOptions = {
     k?: number
 }
 
-const DefaultCreateClusterConfigOptions = {
-    size: 4,
-    k: 30, // size of a checkpoint
-}
-
 export async function createClusterConfig({
-    size = DefaultCreateClusterConfigOptions.size,
-    k = DefaultCreateClusterConfigOptions.k,
+    size = 4,
+    k = 30,
 }: CreateClusterConfigOptions): Promise<SystemConfig> {
-    const nodes = []
-    for (let i = 0; i < size; i++) {
-        nodes.push({
-            name: `node${i}`,
-            host: 'localhost',
-            port: await findPort(),
-            ...genKeyPair(),
-        })
-    }
     const f = Math.floor((size - 1) / 3)
     return {
-        nodes,
+        signature: {
+            enabled: false
+        },
+        nodes: await createElementsAsync(size,
+            async i => ({
+                name: `node${i}`,
+                host: '127.0.0.1',
+                port: await findPort(),
+                ...genKeyPair(),
+            })
+        ),
+        clients: await createElementsAsync(size,
+            async i => ({
+                name: `client${i}`,
+                host: '127.0.0.1',
+                port: await findPort(),
+                ...genKeyPair(),
+            })
+        ),
         params: {
             f,
             k

@@ -32,13 +32,20 @@ async function main() {
     console.log(process.env.CONFIG_PATH)
 
     const systemConfig = readConfig(process.env.CONFIG_PATH)
-    const nodes = systemConfig.nodes
+    const { clients, nodes } = systemConfig
     if (nodes.length === 0) {
         console.error('no node metadata found')
         return
     }
+
     printNodes(nodes)
-    const z = new Client(nodes)
+
+    if (clients.length === 0) {
+        console.error('no client metadata found')
+        return
+    }
+
+    const z = new Client(clients[0], nodes, systemConfig.signature.enabled)
     const exit = false
     const setupCommands = [
         ['status'],
@@ -85,7 +92,7 @@ async function main() {
                     timestamp: Date.now(),
                     payload: args[0],
                 }
-                const ret = await z.send(msg)
+                const ret = await z.request(msg)
                 console.log('request ret: %o', ret)
                 break
             }
@@ -97,7 +104,6 @@ async function main() {
                 const majorRet = findMajority(ret)
                 if (majorRet) {
                     const master = (majorRet as MasterInfoMsg).name
-                    z.master = master
                     console.log('master is %s', master)
                 } else {
                     console.log('no master found')

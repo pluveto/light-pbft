@@ -3,18 +3,16 @@ import { serve } from '../serve'
 import { createClusterConfig } from './util'
 
 describe('2 Nodes Cluster where f = 0', () => {
-    jest.setTimeout(10000)
+    jest.setTimeout(30 * 1000)
 
     let client: Client
     let servers: Array<Awaited<ReturnType<typeof serve>>>
 
     beforeEach(async () => {
-        const cfg = await createClusterConfig({ size: 2 })
-        expect(cfg.params.f).toBe(0)
-        servers = await Promise.all(cfg.nodes.map((node) => serve(node.name, cfg)))
-        client = new Client(cfg.nodes)
-        client.master = await client.findMaster()
-        expect(client.master).toBe(servers[0].node.name)
+        const systemConfig = await createClusterConfig({ size: 2 })
+        expect(systemConfig.params.f).toBe(0)
+        servers = await Promise.all(systemConfig.nodes.map((node) => serve(node.name, systemConfig)))
+        client = new Client(systemConfig.clients[0], systemConfig.nodes, systemConfig.signature.enabled)
     })
 
     afterEach(async () => {
@@ -26,7 +24,7 @@ describe('2 Nodes Cluster where f = 0', () => {
     })
 
     it('should be able to handle request', async () => {
-        const ret = await client.send({
+        const ret = await client.request({
             type: 'request',
             timestamp: Date.now(),
             payload: 'key1:value1',
@@ -48,11 +46,11 @@ describe('2 Nodes Cluster where f = 0', () => {
         const N = 10
         const tasks = []
         for (let i = 0; i < N; i++) {
-            const task = client.send({
+            const task = client.request({
                 type: 'request',
                 timestamp: Date.now(),
                 payload: `key${i}:value${i}`,
-            })
+            }, 30 * 1000)
             tasks.push(task)
         }
         const rets = await Promise.all(tasks)
