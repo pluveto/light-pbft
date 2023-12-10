@@ -1,12 +1,15 @@
 import { ParamConfig } from './config'
+import { HasField } from './types'
 
 export enum ErrorCode {
     NotMaster = 'not-master',
     InvalidType = 'invalid-type',
+    InvalidSignature = 'invalid-signature',
     InvalidView = 'invalid-view',
     InvalidSequence = 'invalid-sequence',
     InvalidDigest = 'invalid-digest',
     InvalidRequest = 'invalid-request',
+    UnknownSender = 'unknown-sender',
     InvalidStatus = 'invalid-status',
     InternalError = 'internal-error',
     DuplicatedMsg = 'duplicated-msg',
@@ -182,6 +185,14 @@ export type LogMessage =
     | ViewChangeMsg
     | NewViewMsg
 
+export type ClientMessage =
+    | RequestMsg
+    | FindMasterMsg
+    | QueryStatusMsg
+    | QueryAutomataMsg
+
+export type SourcedMessage = HasField<Message, 'node'>
+
 export type Message =
     | RequestMsg
     | ReplyMsg
@@ -191,9 +202,9 @@ export type Message =
     | OkMsg
     // Domain specific
     | FindMasterMsg
-    | MasterInfoMsg
     | QueryStatusMsg
     | QueryAutomataMsg
+    | MasterInfoMsg
     | NodeStatusMsg<unknown>
 
 

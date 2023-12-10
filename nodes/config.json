@@ -3,31 +3,38 @@
     "f": 1,
     "k": 20
   },
+  "clients": [
+    {
+      "name": "c1",
+      "prikey": "cb7c0c19c86a51a0601bb032cd25c12200e7a411571948015933679a4b24733f",
+      "pubkey": "04ece8785c8bf47b22197e6f9ee51e2d4cbde698ba098714a0bfcc4e051fab9c809fc6a99c336136b12daac440dda6c66bda6993ee18252f5959c176ca64e62f3b"
+    }
+  ],
   "nodes": [
     {
       "name": "s1",
-      "host": "localhost",
+      "host": "127.0.0.1",
       "port": 32001,
       "prikey": "ab02b32c23e0ec0a46f830b5b3c78144bd7137e4a84f213c9882d428eeff019c",
       "pubkey": "04df2aafab301102fef8ada86a2996222e118a82f95885b699095e164fcc0b051ae213aa799209af85d526b92c684a8906852d12ee7249b81b76d9c1be3829f676"
     },
     {
       "name": "s2",
-      "host": "localhost",
+      "host": "127.0.0.1",
       "port": 32002,
       "prikey": "4f1313c4531e594c05ee463b93603117096514860d0fee48f403945333ad1959",
       "pubkey": "043d2299a3204249b3959044f30023203df321e359fddf3ddb1541eef7067ae93763498482ed6626a416bf564d2fb01e0a9b92789d30cec0b5007d5f46d5ece0f5"
     },
     {
       "name": "s3",
-      "host": "localhost",
+      "host": "127.0.0.1",
       "port": 32003,
       "prikey": "5dccec54ed9fb2f6501a9c206badf83f35400b20eb0e50b76215129df8a4169c",
       "pubkey": "048a175a65ee1001d8de988d14690f299b4f9feea5accfd00bc34ece1e619059552748d23ac07c75fa3707dc3b75e98c182a34be00828f82ed8ba4fbf5a2e0639a"
     },
     {
       "name": "s4",
-      "host": "localhost",
+      "host": "127.0.0.1",
       "port": 32004,
       "prikey": "785d9cb1d0f4e7eff20a3e1e134f1f71df02e20e47aedae9e9481f9049daba59",
       "pubkey": "04b42f0a76b10eabd3a02a4a201718ef11cf6f0322f918f06d919630add8bf8f9687802bad099b8c2d0dbc550a8dd4554758652c9899d3fcb3dd8cea5bb4279aa6"

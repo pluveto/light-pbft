@@ -6,7 +6,7 @@ import { serve } from '../serve'
 import { createClusterConfig } from './util'
 
 describe('4 Nodes Cluster where f = 1', () => {
-    jest.setTimeout(10000)
+    jest.setTimeout(30 * 1000)
 
     let client: Client
     let servers: Array<Awaited<ReturnType<typeof serve>>>
@@ -15,10 +15,9 @@ describe('4 Nodes Cluster where f = 1', () => {
     beforeEach(async () => {
         systemConfig = await createClusterConfig({ size: 4, k: 2 })
         expect(systemConfig.params.f).toBe(1)
+
         servers = await Promise.all(systemConfig.nodes.map((node) => serve(node.name, systemConfig)))
-        client = new Client(systemConfig.nodes)
-        client.master = await client.findMaster()
-        expect(client.master).toBe(servers[0].node.name)
+        client = new Client(systemConfig.clients[0], systemConfig.nodes, systemConfig.signature.enabled)
     })
 
     afterEach(async () => {
@@ -30,7 +29,7 @@ describe('4 Nodes Cluster where f = 1', () => {
     })
 
     it('should be able to handle request', async () => {
-        const ret = await client.send({
+        const ret = await client.request({
             type: 'request',
             timestamp: Date.now(),
             payload: 'key1:value1',
@@ -50,7 +49,7 @@ describe('4 Nodes Cluster where f = 1', () => {
     })
 
     it('should be able to handle request', async () => {
-        const ret = await client.send({
+        const ret = await client.request({
             type: 'request',
             timestamp: Date.now(),
             payload: 'key1:value1',
@@ -76,7 +75,7 @@ describe('4 Nodes Cluster where f = 1', () => {
                 timestamp: Date.now(),
                 payload: `key${i}:value${i}`,
             }
-            const ret = await client.send(req)
+            const ret = await client.request(req)
             expect(ret.type).toBe('reply')
         }
 
@@ -95,11 +94,12 @@ describe('4 Nodes Cluster where f = 1', () => {
         const numRequest = 2
         const tasks = []
         for (let i = 0; i < numRequest; i++) {
-            const task = client.send({
+            const msg: RequestMsg = {
                 type: 'request',
                 timestamp: Date.now(),
                 payload: `key${i}:value${i}`,
-            })
+            }
+            const task = client.request(msg, 30 * 1000)
             tasks.push(task)
         }
         const rets = await Promise.all(tasks)

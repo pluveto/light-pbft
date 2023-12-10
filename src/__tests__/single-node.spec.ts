@@ -5,16 +5,15 @@ import { serve } from '../serve'
 import { createSingleNodeConfig } from './util'
 
 describe('Single Node', () => {
-    jest.setTimeout(10000)
+    jest.setTimeout(30 * 1000)
 
     let client: Client
     let server: Awaited<ReturnType<typeof serve>>
 
     beforeEach(async () => {
-        const cfg = await createSingleNodeConfig('node')
-        server = await serve('node', cfg)
-        client = new Client(cfg.nodes)
-        client.master = 'node'
+        const systemConfig = await createSingleNodeConfig('node')
+        server = await serve('node', systemConfig)
+        client = new Client(systemConfig.clients[0], systemConfig.nodes, systemConfig.signature.enabled)
     })
 
     afterEach(async () => {
@@ -26,7 +25,7 @@ describe('Single Node', () => {
     })
 
     it('should be able to handle request', async () => {
-        const ret = await client.send({
+        const ret = await client.request({
             type: 'request',
             timestamp: Date.now(),
             payload: 'key1:value1',
@@ -48,11 +47,11 @@ describe('Single Node', () => {
         const N = 10
         const tasks = []
         for (let i = 0; i < N; i++) {
-            const task = client.send({
+            const task = client.request({
                 type: 'request',
                 timestamp: Date.now(),
                 payload: `key${i}:value${i}`,
-            })
+            }, 30 * 1000)
             tasks.push(task)
         }
         const rets = await Promise.all(tasks)

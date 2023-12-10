@@ -1,4 +1,3 @@
-import jaysom from 'jayson/promise'
 import { Mutex } from 'async-mutex'
 import assert from 'assert'
 
@@ -17,7 +16,10 @@ import {
     createPromiseHandler,
     SeqIterator,
     TimeoutError,
-    deepEquals
+    deepEquals,
+    NetworkClient,
+    createNetworkClient,
+    SignedObject
 } from './util'
 
 import {
@@ -39,10 +41,12 @@ import {
     NodeStatusMsg,
     ViewChangeMsg,
     NewViewMsg,
-    ReplyMsg
+    ReplyMsg,
+    SourcedMessage
 } from './message'
 
 import { WaitGroup } from './waitgroup'
+import { verify } from './sign'
 
 export enum NodeStatus {
     Idle = 'idle',
@@ -62,7 +66,7 @@ export class Node<TAutomataStatus> {
     config: NodeConfig
     systemConfig: SystemConfig
     logger: NamedLogger
-    nodes: Map<string, jaysom.client> = new Map() // name -> client
+    nodes: Map<string, NetworkClient> = new Map() // name -> client
 
     // for graceful shutdown. ensure all async tasks are done before close
     closed = new WaitGroup()
@@ -176,12 +180,10 @@ export class Node<TAutomataStatus> {
         this.systemConfig = config
         this.automata = automata
 
-        this.systemConfig.nodes.map((node) => {
-            const client = jaysom.client.http({
-                host: node.host,
-                port: node.port,
-            })
-            this.nodes.set(node.name, client)
+        const enableSign = this.systemConfig.signature.enabled
+        this.systemConfig.nodes.map((targetConfig) => {
+            const networkClient = createNetworkClient(this.config, targetConfig, enableSign)
+            this.nodes.set(targetConfig.name, networkClient)
         })
     }
 
@@ -189,6 +191,7 @@ export class Node<TAutomataStatus> {
         this.status = NodeStatus._Malicious
     }
 
+    // gracefully close the node
     async close() {
         await this.closed.wait()
     }
@@ -196,9 +199,39 @@ export class Node<TAutomataStatus> {
     routes() {
         const wrapper = (routes: Routes): Routes => {
             return Object.fromEntries(Object.entries(routes).map(([key, handler]): [string, typeof handler] => {
-                return [key, async (msg) => {
+                return [key, async (rawMsg) => {
                     const logger = this.logger.derived('routes/' + key)
-                    logger.debug('recv', msg)
+                    logger.debug('recv', rawMsg)
+
+                    let msg: Message
+                    if (this.systemConfig.signature.enabled) {
+                        const { signer, signature, data } = rawMsg as Partial<SignedObject<Message>>
+
+                        if (!signature || !data) {
+                            return createErrorMsg(ErrorCode.InvalidRequest)
+                        }
+
+                        msg = data as Message
+
+                        const pubkey = [...this.systemConfig.nodes, ...this.systemConfig.clients].find(x => x.name === signer)?.pubkey
+                        if (!pubkey) {
+                            return createErrorMsg(ErrorCode.UnknownSender, `unknown sender ${signer}`)
+                        }
+
+                        const signValid = verify(pubkey, digestMsg(msg), signature)
+                        if (!signValid) {
+                            return createErrorMsg(ErrorCode.InvalidSignature)
+                        }
+
+                        // if msg has node field, it should be the same as signer
+                        const { node } = msg as SourcedMessage
+                        if (node && node !== signer) {
+                            return createErrorMsg(ErrorCode.InvalidRequest)
+                        }
+                    } else {
+                        msg = rawMsg as Message
+                    }
+
                     try {
                         const ret = await handler(msg) as Message
                         if (ret.type === 'error') {
@@ -207,6 +240,7 @@ export class Node<TAutomataStatus> {
                             logger.debug('resp', ret)
                         }
                         return ret
+
                     } catch (error) {
                         logger.error(error)
                         const ret = error instanceof RemoteError ? createErrorMsg(error.code, error.message) : {
@@ -294,7 +328,7 @@ export class Node<TAutomataStatus> {
         this.closed.incr()
         return promise.then((rets) => {
             // prevent logging when the node is closed, same below
-            this.logger.debug('boardcasted', rets)
+            this.logger.debug('boardcast reply', rets)
         }).catch((error) => {
             this.logger.error('boardcast error', error)
         }).finally(() => {
@@ -388,7 +422,7 @@ export class Node<TAutomataStatus> {
                         return reply
                     }
 
-                    signal = createPromiseHandler<void>('request timeout', 10 * 1000)
+                    signal = createPromiseHandler<void>('request timeout', 30 * 1000)
 
                     const n = this.seq.next()
                     const prePrepareMsg: PrePrepareMsg = {
@@ -916,17 +950,17 @@ export class Node<TAutomataStatus> {
         }
     }
 
-    async boardcast<T extends Message>(payload: T, timeout: number = 3000): Promise<Message[]> {
+    async boardcast<T extends Message>(payload: T, timeout: number = 30 * 1000): Promise<Message[]> {
         const nodes = [...this.nodes.values()]
-        return withTimeout(multicast(nodes, payload), timeout, 'boardcast timeout')
+        return withTimeout(multicast(nodes, payload), timeout, `boardcast timeout after ${timeout}ms, msg.type is ${payload.type} from ${this.name}`)
     }
 
-    async forward<T extends Message>(node: string, payload: T, timeout: number = 3000): Promise<Message> {
-        const client = this.nodes.get(node)
-        if (!client) {
+    async forward<T extends Message>(node: string, payload: T, timeout: number = 30 * 1000): Promise<Message> {
+        const sender = this.nodes.get(node)
+        if (!sender) {
             throw new RemoteError(ErrorCode.InternalError, `node ${node} not found`)
         }
-        return withTimeout(client.request(payload.type, payload), timeout, 'forward timeout')
+        return withTimeout(sender(payload), timeout, 'forward timeout')
     }
 
     /**

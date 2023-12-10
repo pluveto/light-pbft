@@ -1,4 +1,4 @@
-import { genKeyPair } from '../util'
+import { genKeyPair } from '../sign'
 
 export function main() {
     const N = Number(process.argv[2])
@@ -8,6 +8,7 @@ export function main() {
         process.exit(1)
     }
 
+    console.log('index,prikey,pubkey')
     for (let i = 0; i < N; i++) {
         const { prikey, pubkey } = genKeyPair()
         console.log(`${i},${prikey},${pubkey}`)

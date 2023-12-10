@@ -7,7 +7,7 @@ import { serve } from '../serve'
 import { createClusterConfig } from './util'
 
 describe('4 Nodes Cluster where f = 1 with master turns malicious', () => {
-    jest.setTimeout(10000)
+    jest.setTimeout(30 * 1000)
 
     let client: Client
     let servers: Array<Awaited<ReturnType<typeof serve>>>
@@ -19,9 +19,7 @@ describe('4 Nodes Cluster where f = 1 with master turns malicious', () => {
         expect(systemConfig.params.f).toBe(1)
 
         servers = await Promise.all(systemConfig.nodes.map((node) => serve(node.name, systemConfig)))
-        client = new Client(systemConfig.nodes)
-        client.master = await client.findMaster()
-        expect(client.master).toBe(servers[0].node.name)
+        client = new Client(systemConfig.clients[0], systemConfig.nodes, systemConfig.signature.enabled)
 
         master = servers[0].node
     })
@@ -42,7 +40,7 @@ describe('4 Nodes Cluster where f = 1 with master turns malicious', () => {
                 timestamp: Date.now(),
                 payload: `key${i}:value${i}`,
             }
-            const task = client.request(req)
+            const task = client.request(req, 30 * 1000)
             rets.push(await task)
         }
 

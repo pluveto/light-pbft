@@ -32,6 +32,13 @@ export async function serve(name: string, systemConfig: SystemConfig) {
     const node = new Node(config, systemConfigLocal, new KVAutomata(new NamedLogger(config.name).derived('automata')))
     const server = new jayson.Server(node.routes())
     const http = server.http()
+    http.on('error', (err) => {
+        console.error(err)
+    })
+
+    http.on('close', () => {
+        console.log('http server closed')
+    })
 
     await new Promise<void>((resolve) => {
         http.listen({

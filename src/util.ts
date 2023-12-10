@@ -1,27 +1,10 @@
-import * as net from 'net'
-import jaysom from 'jayson/promise'
 import crypto from 'crypto'
-import { Message } from './message'
+import jayson from 'jayson/promise'
 
-export function getAvailablePort(): Promise<number> {
-    return new Promise((resolve, reject) => {
-        const server = net.createServer()
-        server.on('error', reject)
-        server.listen(0, () => {
-            const addr = server.address()
-            if (typeof addr === 'string') {
-                throw new Error('Unexpected string address')
-            }
-            if (addr === null) {
-                throw new Error('Unexpected null address')
-            }
-            const port = addr.port
-            server.close(() => {
-                resolve(port)
-            })
-        })
-    })
-}
+import { Message, RemoteError } from './message'
+import { SenderConfig, NodeConfig } from './config'
+import { sign } from './sign'
+
 export function sha256(data: string): string {
     const hash = crypto.createHash('sha256')
     hash.update(data)
@@ -52,14 +35,54 @@ export function createSeqIterator(max: number = Infinity) {
     }
 }
 
-export async function multicast<T extends Message>(clients: jaysom.HttpClient[], payload: T): Promise<Message[]> {
-    const reqs = clients.map((node) => node.request(payload.type, payload))
-    const ret = await Promise.all(reqs)
-    return ret.map((r) => r.result)
+export type NetworkClient = (msg: Message) => Promise<Message>
+
+export type SignedObject<T> = {
+    signer: string
+    signature: string
+    data: T
 }
 
+export function createNetworkClient(source: SenderConfig, target: NodeConfig, enableSign: boolean): NetworkClient {
+    const client = jayson.client.http({
+        host: target.host,
+        port: target.port,
+        timeout: 3 * 60 * 1000,
+    })
 
+    client.on('http error', (err: Error) => {
+        console.warn('http error')
+        console.error(err)
+    })
 
+    if (!enableSign) {
+        return async (msg: Message) => {
+            const res = await client.request(msg.type, msg)
+            if (res.error) {
+                throw new RemoteError(res.error.code, res.error.message)
+            }
+            return res.result
+        }
+    }
+
+    return async (msg: Message) => {
+        // sign the message before sending
+        const signedMsg: SignedObject<Message> = {
+            signer: source.name,
+            signature: sign(source.prikey, digestMsg(msg)),
+            data: msg,
+        }
+        const res = await client.request(msg.type, signedMsg)
+        if (res.error) {
+            throw new RemoteError(res.error.code, res.error.message)
+        }
+        return res.result
+    }
+}
+
+export async function multicast<T extends Message>(senders: NetworkClient[], payload: T): Promise<Message[]> {
+    return await Promise.all(senders.map(sender => sender(payload)))
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function deepEquals(a: any, b: any) {
@@ -89,13 +112,14 @@ export class TimeoutError extends Error {
     }
 }
 
-export function withTimeout<T>(promise: Promise<T>, timeout: number, message: string | Error = 'timed out'): Promise<T> {
+export function withTimeout<T>(promise: Promise<T>, timeout: number, message?: string | Error): Promise<T> {
     if (timeout === Infinity || timeout <= 0) {
         return promise
     }
     return new Promise((resolve, reject) => {
         const timeoutHandle = setTimeout(() => {
-            if (typeof message === 'string') {
+            if (typeof message === 'string' || message === undefined) {
+                message = message ?? `timeout after ${timeout}ms`
                 reject(new TimeoutError(message))
             } else {
                 reject(message)
@@ -120,7 +144,7 @@ export function digestMsg<T extends Message>(msg: T) {
     return sha256(JSON.stringify(msg))
 }
 
-export function createPromiseHandler<T>(timeoutMessage?: string, timeout: number = 3000) {
+export function createPromiseHandler<T>(timeoutMessage?: string, timeout: number = 30 * 1000) {
     let resolver: (value: T | PromiseLike<T>) => void, rejecter: (reason?: Error) => void
     let timeoutHandle: NodeJS.Timeout
     let done = false
@@ -156,4 +180,10 @@ export function createPromiseHandler<T>(timeoutMessage?: string, timeout: number
 
 export type PromiseHandler<T> = ReturnType<typeof createPromiseHandler<T>>
 
-
+export async function createElementsAsync<T>(size: number, fn: (index: number) => Promise<T>) {
+    const operations = Array.from({ length: size }, async (_, index) => {
+        const item = await fn(index)
+        return item
+    })
+    return await Promise.all(operations)
+}

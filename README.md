@@ -20,7 +20,10 @@ A simple implementation of OSDI PBFT (Practical Byzantine Fault Tolerance) proto
 - [x] Support custom state machine and storage layer
   - default: a simple in-memory storage state machine
 
-**WARNING**: This is not for production use, because the osdi99 PBFT protocol doesn't support lagged node recovery.
+**WARNING**:
+
+- This is not for production use, because the osdi99 PBFT protocol doesn't support lagged node recovery.
+- Signature verification is implemented and it works, but it's expensive and not optimized, so it's disabled by default.
 
 ## References
 

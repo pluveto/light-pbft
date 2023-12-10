@@ -2,8 +2,14 @@ import fs from 'fs'
 import jsonschema from 'jsonschema'
 
 export type SystemConfig = {
+    signature: SignatureConfig
+    clients: SenderConfig[]
     nodes: NodeConfig[]
     params: ParamConfig
+}
+
+export type SignatureConfig = {
+    enabled: boolean
 }
 
 export type ParamConfig = {
@@ -16,18 +22,30 @@ export type ParamConfig = {
     k: number
 }
 
-export type NodeConfig = {
+export type SenderConfig = {
     name: string
-    host: string
-    port: number
     pubkey: string
     prikey: string
 }
+
+export type NodeConfig = {
+    host: string
+    port: number
+} & SenderConfig
 
 export const schema = {
     '$schema': 'http://json-schema.org/draft-07/schema#',
     'type': 'object',
     'properties': {
+        'signature': {
+            'type': 'object',
+            'properties': {
+                'enabled': {
+                    'type': 'boolean',
+                    'default': 'true'
+                }
+            },
+        },
         'nodes': {
             'type': 'array',
             'items': {
@@ -41,6 +59,24 @@ export const schema = {
                     },
                     'port': {
                         'type': 'number'
+                    },
+                    'pubkey': {
+                        'type': 'string'
+                    },
+                    'prikey': {
+                        'type': 'string'
+                    }
+                },
+                'required': ['name', 'host', 'port', 'pubkey', 'prikey']
+            }
+        },
+        'clients': {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'name': {
+                        'type': 'string'
                     },
                     'pubkey': {
                         'type': 'string'
