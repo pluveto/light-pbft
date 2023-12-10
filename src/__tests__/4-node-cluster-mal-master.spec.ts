@@ -67,10 +67,10 @@ describe('4 Nodes Cluster where f = 1 with master turns malicious', () => {
         console.log(status)
         expect(status).toHaveLength(4)
 
-        // const height = status.map((item) => item.height)
-        // expect([...new Set(height)]).toEqual([numRequest])
+        const height = status.map((item) => item.height)
+        expect([...new Set(height)]).toEqual([numRequest])
 
-        // const lowWaterMark = status.map((item) => item.lowWaterMark)
-        // expect([...new Set(lowWaterMark)]).toEqual([numRequest])
+        const lowWaterMark = status.map((item) => item.lowWaterMark)
+        expect([...new Set(lowWaterMark)]).toEqual([numRequest])
     })
 })
