@@ -8,7 +8,7 @@ export interface Automata<TStatus> {
     // transfer the state machine with a input
     transfer(tx: ByteLike): void
     // query the state machine with a command
-    query(key: ByteLike): ByteLike | undefined
+    query(command: ByteLike): ByteLike | undefined
     status(): TStatus
     digest(): string
 }
@@ -22,15 +22,15 @@ export class KVAutomata implements Automata<KVAutomataState> {
     state: Map<string, string> = new Map()
     history: string[] = []
     height: number = 0
-    logger: Logger
+    logger?: Logger
     lastDigest: string = ''
 
-    constructor(logger: Logger) {
+    constructor(logger?: Logger) {
         this.logger = logger
     }
 
     transfer(tx: string) {
-        this.logger.info('transferring', tx)
+        this.logger?.info('transferring', tx)
         const [key, value] = this.parse(tx)
         if (value === undefined) {
             this.state.delete(key)
@@ -44,7 +44,7 @@ export class KVAutomata implements Automata<KVAutomataState> {
         this.lastDigest = hash.digest('hex')
 
         this.history.push(tx)
-        this.logger.info('transferred')
+        this.logger?.info('transferred')
     }
 
     parse(tx: string): [string, Optional<string>] {
