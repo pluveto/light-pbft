@@ -44,6 +44,7 @@ export async function retry<T>(fn: () => Promise<T>, options: RetryOptions = Def
         try {
             logger?.(`Attempt ${i + 1} of ${maxAttempts}`)
             const result = await fn()
+            logger?.(`Attempt ${i + 1} succeeded`)
             return result
         } catch (err) {
             const error = err as Error

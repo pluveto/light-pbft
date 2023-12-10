@@ -55,7 +55,8 @@ export class Client {
                     return true // only retry for view changing
                 }
                 return false
-            }
+            },
+            logger: console.log,
         })
     }
 
