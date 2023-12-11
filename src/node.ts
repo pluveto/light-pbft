@@ -265,7 +265,7 @@ export class Node<TAutomataStatus> {
     checkpoint() {
         const logger = this.logger.derived('checkpoint')
 
-        const lastCommitted = this.logs.last(x => x.type === 'committed') as Optional<CommittedLogMsg>
+        const lastCommitted = this.logs.last('committed') as Optional<CommittedLogMsg>
         if (!lastCommitted) {
             logger.error('no last commit found but checkpoint triggered. if you see this message, it\'s a bug')
             return
@@ -296,19 +296,19 @@ export class Node<TAutomataStatus> {
         const newView = this.nextView
         logger.debug('attempt to change view, current view', this.view, 'new view', newView)
 
-        const proof = this.logs.select(x => x.type === 'checkpoint' && x.sequence === this.lastStableSeq) as CheckpointMsg[]
+        const proof = this.logs.select('checkpoint', x => x.sequence === this.lastStableSeq)
         if (proof.length <= 2 * this.systemConfig.params.f) {
             logger.error('no enough proof for view change')
             return
         }
 
         const pendings = this.logs
-            .select(x => x.type === 'pre-prepare' && x.sequence > this.lastStableSeq)
+            .select('pre-prepare', x => x.sequence > this.lastStableSeq)
             .map((pp) => {
                 assert(pp.type === 'pre-prepare')
                 return {
                     prePrepareMsg: pp,
-                    prepareMsgs: this.logs.select(p => p.type === 'prepare' && p.sequence === pp.sequence && p.digest === pp.digest) as PrepareMsg[],
+                    prepareMsgs: this.logs.select('prepare', p => p.sequence === pp.sequence && p.digest === pp.digest)
                 }
             })
 
@@ -386,8 +386,7 @@ export class Node<TAutomataStatus> {
                 if (!this.isMaster) {
                     await this.forward(this.master.name, msg)
                     const committed = this.logs.last(
-                        x => x.type === 'committed'
-                            && x.digest === digest
+                        'committed', x => x.digest === digest
                             && x.view == this.view
                     )
                     if (!committed) {
@@ -416,9 +415,8 @@ export class Node<TAutomataStatus> {
                     requires(!this.viewChanging, ErrorCode.ViewChanging, 'view changing, not available')
                     requires(this.seqValid(this.seq.peek()), ErrorCode.InvalidSequence)
 
-                    const existing = (this.logs.first(
-                        x => x.type === 'pre-prepare'
-                            && x.view === this.view
+                    const existing = (this.logs.last(
+                        'pre-prepare', x => x.view === this.view
                             && x.digest === digest
                     ) as Optional<PrePrepareMsg>)?.request
 
@@ -456,8 +454,7 @@ export class Node<TAutomataStatus> {
                     signal = undefined
 
                     requires(this.logs.last(
-                        x => x.type === 'committed'
-                            && x.digest === prePrepareMsg.digest
+                        'committed', x => x.digest === prePrepareMsg.digest
                             && x.view == this.view
                             && x.sequence === n
                     ) !== undefined, ErrorCode.InternalError, 'no commit message found for request')
@@ -507,8 +504,8 @@ export class Node<TAutomataStatus> {
 
                 // if msg already prepared or committed, then return ok
                 if (this.logs.last(
-                    x => x.type === 'commit'
-                        && x.digest === msg.digest
+                    'commit',
+                    x => x.digest === msg.digest
                         && x.view == this.view
                         && x.sequence === msg.sequence
                 )) {
@@ -516,8 +513,8 @@ export class Node<TAutomataStatus> {
                 }
 
                 if (this.logs.last(
-                    x => x.type === 'prepare'
-                        && x.digest === msg.digest
+                    'prepare',
+                    x => x.digest === msg.digest
                         && x.view == this.view
                         && x.sequence === msg.sequence
                 )) {
@@ -551,8 +548,7 @@ export class Node<TAutomataStatus> {
 
                 // msg should be pre-prepared
                 const prePrepareLog = this.logs.last(
-                    x => x.type === 'pre-prepare'
-                        && x.digest === msg.digest
+                    'pre-prepare', x => x.digest === msg.digest
                         && x.view == this.view
                         && x.sequence === msg.sequence
                 )
@@ -561,9 +557,8 @@ export class Node<TAutomataStatus> {
                 requires(!this.logs.exists(msg), ErrorCode.DuplicatedMsg, 'duplicated prepare message')
 
                 // status validation
-                requires((this.logs.first(
-                    x => x.type === 'pre-prepare'
-                        && x.sequence === msg.sequence
+                requires((this.logs.last(
+                    'pre-prepare', x => x.sequence === msg.sequence
                         && x.digest === msg.digest
                 ) as Optional<PrePrepareMsg>)?.request !== undefined, ErrorCode.InvalidStatus, 'no current request')
                 //  msg validation
@@ -571,8 +566,7 @@ export class Node<TAutomataStatus> {
                 this.logs.append(msg)
 
                 const count = this.logs.count(
-                    x => x.type === 'prepare'
-                        && x.digest === msg.digest
+                    'prepare', x => x.digest === msg.digest
                         && x.view == this.view
                         && x.sequence === msg.sequence
                 )
@@ -586,9 +580,8 @@ export class Node<TAutomataStatus> {
                     return ok('preparing')
                 }
 
-                if (this.logs.first(
-                    x => x.type === 'prepared'
-                        && x.node === this.name
+                if (this.logs.last(
+                    'prepared', x => x.node === this.name
                         && x.digest === msg.digest
                         && x.view == this.view
                         && x.sequence === msg.sequence
@@ -637,9 +630,8 @@ export class Node<TAutomataStatus> {
                 // prevent duplicated commit
                 requires(!this.logs.exists(msg), ErrorCode.DuplicatedMsg, 'duplicated commit message')
 
-                const committed = this.logs.exists(
-                    x => x.type === 'committed'
-                        && x.digest === msg.digest
+                const committed = this.logs.last(
+                    'committed', x => x.digest === msg.digest
                         && x.view == this.view
                         && x.sequence === msg.sequence
                         && x.node === this.name
@@ -651,9 +643,8 @@ export class Node<TAutomataStatus> {
                 }
 
                 // a pre-prepare should exists in logs
-                const log = this.logs.first(
-                    x => x.type === 'pre-prepare'
-                        && x.sequence === msg.sequence
+                const log = this.logs.last(
+                    'pre-prepare', x => x.sequence === msg.sequence
                         && x.digest === msg.digest
                 ) as Optional<PrePrepareMsg>
 
@@ -677,8 +668,7 @@ export class Node<TAutomataStatus> {
                 this.logs.append(msg)
 
                 const count = this.logs.count(
-                    x => x.type === 'commit'
-                        && x.digest === msg.digest
+                    'commit', x => x.digest === msg.digest
                         && x.view == this.view
                         && x.sequence === msg.sequence
                 )
@@ -689,9 +679,8 @@ export class Node<TAutomataStatus> {
 
                 logger.debug('collected enough commit messages')
                 // mutate state
-                const request = (this.logs.first(
-                    x => x.type === 'pre-prepare'
-                        && x.sequence === msg.sequence
+                const request = (this.logs.last(
+                    'pre-prepare', x => x.sequence === msg.sequence
                         && x.digest === msg.digest
                 ) as Optional<PrePrepareMsg>)?.request
 
@@ -746,7 +735,7 @@ export class Node<TAutomataStatus> {
                 this.logs.append(msg)
 
                 const count = this.logs.count(
-                    x => x.type === 'checkpoint' && x.sequence === msg.sequence && x.digest === msg.digest
+                    'checkpoint', x => x.sequence === msg.sequence && x.digest === msg.digest
                 )
 
                 logger.debug('count', count)
@@ -792,10 +781,8 @@ export class Node<TAutomataStatus> {
                 this.logs.append(msg)
 
                 // collect 2f+1 view-change messages
-                const viewChangeMsgs = this.logs.select<ViewChangeMsg>(
-                    x => x.type === 'view-change'
-                        && x.view === msg.view
-                        && x.sequence === msg.sequence
+                const viewChangeMsgs = this.logs.select(
+                    'view-change', x => x.view === msg.view && x.sequence === msg.sequence
                 )
 
                 const count = viewChangeMsgs.length

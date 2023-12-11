@@ -30,21 +30,21 @@ describe('Logs', () => {
 
     it('select should return filtered entries', () => {
         logs.entries = [['digest1', mockMessage], ['digest2', { ...mockMessage, node: 'node2' }]]
-        const selected = logs.select(msg => msg.type === 'committed' && msg.node === 'node1') as CommittedLogMsg[]
+        const selected = logs.select('committed', msg => msg.node === 'node1') as CommittedLogMsg[]
         expect(selected.length).toBe(1)
         expect(selected[0].node).toBe('node1')
     })
 
     it('count should return the number of entries matching the predicate', () => {
         logs.entries = [['digest1', mockMessage], ['digest2', { ...mockMessage, node: 'node2' }]]
-        const count = logs.count(msg => msg.type === 'committed' && msg.node === 'node1')
+        const count = logs.count('committed', msg => msg.node === 'node1')
         expect(count).toBe(1)
     })
 
     // Similar tests can be written for `first`, `exists`, `last`, and `clear` methods.
     it('first should return the first entry matching the predicate', () => {
         logs.entries = [['digest1', mockMessage], ['digest2', { ...mockMessage, node: 'node2' }]]
-        const first = logs.first(msg => msg.type === 'committed' && msg.node === 'node1') as Optional<CommittedLogMsg>
+        const first = logs.first('committed', msg => msg.node === 'node1') as Optional<CommittedLogMsg>
         expect(first?.node).toBe('node1')
     })
 
@@ -56,7 +56,7 @@ describe('Logs', () => {
 
     it('last should return the last entry matching the predicate', () => {
         logs.entries = [['digest1', mockMessage], ['digest2', { ...mockMessage, node: 'node2' }]]
-        const last = logs.last(msg => msg.type === 'committed' && msg.node === 'node1') as Optional<CommittedLogMsg>
+        const last = logs.last('committed', msg => msg.node === 'node1') as Optional<CommittedLogMsg>
         expect(last?.node).toBe('node1')
     })
 
