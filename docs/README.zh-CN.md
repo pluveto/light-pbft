@@ -46,11 +46,11 @@
 
 服务器：
 
-![servers.png](https://raw.githubusercontent.com/pluveto/0images/master/2023/12/upgit_20231211_1702224876.png)
+<img src="https://raw.githubusercontent.com/pluveto/0images/master/2023/12/upgit_20231211_1702224876.png" alt="pbft servers" width="500" />
 
 CLI 客户端：
 
-![client.png](https://raw.githubusercontent.com/pluveto/0images/master/2023/12/upgit_20231211_1702224932.png)
+<img src="https://raw.githubusercontent.com/pluveto/0images/master/2023/12/upgit_20231211_1702224932.png" alt="pbft client" width="500px" />
 
 客户端 CLI 命令：
 

@@ -48,11 +48,11 @@ For example, you can run `LIGHT_PBFT_CLUSTER_CONFIG=configs/cluster.json pnpm ru
 
 Servers:
 
-![servers.png](https://raw.githubusercontent.com/pluveto/0images/master/2023/12/upgit_20231211_1702224876.png)
+<img src="https://raw.githubusercontent.com/pluveto/0images/master/2023/12/upgit_20231211_1702224876.png" alt="pbft servers" width="500" />
 
 CLI Client:
 
-![client.png](https://raw.githubusercontent.com/pluveto/0images/master/2023/12/upgit_20231211_1702224932.png)
+<img src="https://raw.githubusercontent.com/pluveto/0images/master/2023/12/upgit_20231211_1702224932.png" alt="pbft client" width="500px" />
 
 Client CLI Commands:
 
