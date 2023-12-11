@@ -214,19 +214,32 @@ export type ClientMessage =
 
 export type SourcedMessage = HasField<Message, 'node'>
 
-export type Message =
-    | RequestMsg
-    | ReplyMsg
-    | LogMessage
-    | ErrorMsg
-    | OkMsg
-    | FindMasterMsg
-    | QueryStatusMsg
-    | QueryAutomataMsg
-    | CorruptMsg
-    | MasterInfoMsg
-    | NodeStatusMsg<unknown>
 
 
-export type MessageType = Message['type'];
 
+export type MessageTypeMap = {
+    'request': RequestMsg
+    'reply': ReplyMsg
+    'pre-prepare': PrePrepareMsg
+    'prepare': PrepareMsg
+    'commit': CommitMsg
+    'committed': CommittedLogMsg
+    'prepared': PreparedLogMsg
+    'checkpoint': CheckpointMsg
+    'view-change': ViewChangeMsg
+    'new-view': NewViewMsg
+    'error': ErrorMsg
+    'ok': OkMsg
+    'find-master': FindMasterMsg
+    'query-status': QueryStatusMsg
+    'query-automata': QueryAutomataMsg
+    'corrupt': CorruptMsg
+    'master-info': MasterInfoMsg
+    'node-status': NodeStatusMsg<unknown>
+}
+
+export type Message = MessageTypeMap[keyof MessageTypeMap]
+
+export type MessageType = keyof MessageTypeMap
+
+export type LogMessageOfType<T extends LogMessage['type']> = Extract<LogMessage, { type: T }>;

@@ -1,10 +1,12 @@
 import { Logger } from './logger'
-import { LogMessage } from './message'
+import { LogMessage, LogMessageOfType } from './message'
 
 type DigestFn = (msg: LogMessage) => string;
 
+
 export class Logs {
     _entries: Map<string, LogMessage[]> = new Map()
+    _typeIndex: Map<string, LogMessage[]> = new Map()
     digest: DigestFn
     logger?: Logger
 
@@ -19,6 +21,19 @@ export class Logs {
             }
         }
         this._entries = acc
+
+        const typeIndex = new Map<string, LogMessage[]>()
+        for (const messages of this._entries.values()) {
+            for (const msg of messages) {
+                const typeEntries = typeIndex.get(msg.type)
+                if (typeEntries) {
+                    typeEntries.push(msg)
+                } else {
+                    typeIndex.set(msg.type, [msg])
+                }
+            }
+        }
+        this._typeIndex = typeIndex
     }
 
     get entries(): [string, LogMessage][] {
@@ -46,41 +61,68 @@ export class Logs {
                 this._entries.set(digest, _entries)
             }
             _entries.push(msg)
+
+            // 更新类型索引
+            let typeEntries = this._typeIndex.get(msg.type)
+            if (!typeEntries) {
+                typeEntries = []
+                this._typeIndex.set(msg.type, typeEntries)
+            }
+            typeEntries.push(msg)
         }
     }
 
-    select<T extends LogMessage>(predicate: (msg: LogMessage) => boolean): T[] {
-        const results: T[] = []
-        for (const messages of this._entries.values()) {
-            for (const msg of messages) {
-                if (predicate(msg)) {
-                    results.push(msg as T)
-                }
+    select<T extends LogMessage['type']>(
+        msgType: T,
+        predicate?: (msg: LogMessageOfType<T>) => boolean
+    ): LogMessageOfType<T>[] {
+        const results: LogMessageOfType<T>[] = []
+        const messages = this._typeIndex.get(msgType) ?? []
+
+        if (!predicate) {
+            return messages as LogMessageOfType<T>[]
+        }
+
+        for (const msg of messages) {
+            if (predicate(msg as LogMessageOfType<T>)) {
+                results.push(msg as LogMessageOfType<T>)
             }
         }
         return results
     }
 
-    count(predicate: (msg: LogMessage) => boolean): number {
+    count<T extends LogMessage['type']>(msgType: T, predicate?: (msg: LogMessageOfType<T>) => boolean): number {
+        const messages = this._typeIndex.get(msgType) ?? []
+
+        if (!predicate) {
+            return messages.length
+        }
+
         let count = 0
-        for (const messages of this._entries.values()) {
-            for (const msg of messages) {
-                if (predicate(msg)) {
-                    count++
-                }
+        for (const msg of messages) {
+            if (predicate(msg as LogMessageOfType<T>)) {
+                count += 1
             }
         }
         return count
     }
 
-    first<T extends LogMessage>(predicate: (msg: LogMessage) => boolean): T | undefined {
-        for (const messages of this._entries.values()) {
-            for (const msg of messages) {
-                if (predicate(msg)) {
-                    return msg as T
-                }
+    first<T extends LogMessage['type']>(msgType: T, predicate?: (msg: LogMessageOfType<T>) => boolean): LogMessageOfType<T> | undefined {
+        const msgs = this._typeIndex.get(msgType)
+        if (!msgs) {
+            return undefined
+        }
+
+        if (!predicate) {
+            return msgs[0] as LogMessageOfType<T>
+        }
+
+        for (const msg of msgs) {
+            if (predicate(msg as LogMessageOfType<T>)) {
+                return msg as LogMessageOfType<T>
             }
         }
+
         return undefined
     }
 
@@ -99,13 +141,23 @@ export class Logs {
         return false
     }
 
-    last<T extends LogMessage>(predicate: (msg: LogMessage) => boolean): T | undefined {
-        const allMessages = Array.from(this._entries.values()).flat().reverse()
-        for (const msg of allMessages) {
-            if (predicate(msg)) {
-                return msg as T
+
+    last<T extends LogMessage['type']>(msgType: T, predicate?: (msg: LogMessageOfType<T>) => boolean): LogMessageOfType<T> | undefined {
+        const msgs = this._typeIndex.get(msgType)
+        if (!msgs) {
+            return undefined
+        }
+
+        if (!predicate) {
+            return msgs[msgs.length - 1] as LogMessageOfType<T>
+        }
+
+        for (const msg of msgs.reverse()) {
+            if (predicate(msg as LogMessageOfType<T>)) {
+                return msg as LogMessageOfType<T>
             }
         }
+
         return undefined
     }
 
@@ -121,6 +173,17 @@ export class Logs {
                     this._entries.delete(digest)
                 }
                 toClear.add(digest)
+            }
+        }
+
+        for (const [type, messages] of this._typeIndex) {
+            const filteredMessages = messages.filter(msg => !predicate(msg))
+            if (filteredMessages.length !== messages.length) {
+                if (filteredMessages.length > 0) {
+                    this._typeIndex.set(type, filteredMessages)
+                } else {
+                    this._typeIndex.delete(type)
+                }
             }
         }
     }
